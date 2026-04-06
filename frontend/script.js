@@ -625,9 +625,9 @@ function handleRegister(e) {
 
 	if (errorDiv) errorDiv.classList.remove('show');
 
-	if (!username || !password || !barangayId) {
+	if (!username || !email || !password || !barangayId) {
 		if (errorDiv && errorMsg) {
-			errorMsg.textContent = 'Username, password, and assigned barangay are required.';
+			errorMsg.textContent = 'Username, email, password, and assigned barangay are required.';
 			errorDiv.classList.add('show');
 		}
 		return;

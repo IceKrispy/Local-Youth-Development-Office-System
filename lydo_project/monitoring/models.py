@@ -29,6 +29,7 @@ class UserAccessLog(models.Model):
     def __str__(self):
         return f"{self.user.username} @ {self.login_time:%Y-%m-%d %H:%M:%S}"
 
+
 class Youth(models.Model):
     # --- DEMOGRAPHICS ---
     name = models.CharField(max_length=200, help_text="Full Name")

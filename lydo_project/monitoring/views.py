@@ -15,6 +15,8 @@ from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.db.models import Count
 from django.utils import timezone
 from .models import Youth, Barangay, UserBarangayAssignment, UserAccessLog
@@ -765,8 +767,7 @@ def _build_blank_form_pdf(barangay_name, include_logo=False):
         "Reason if not enrolling",
         line_y_offset=24,
     )
-    disability_bottom = _draw_line_field(pdf, right_x, row_top, half_width, "Type of Disability", line_y_offset=24)
-    top = max(left_bottom, disability_bottom) + 6
+    top = left_bottom + 6
     top = _draw_checkbox_list(
         pdf,
         left_x,
@@ -879,14 +880,19 @@ def register_view(request):
 
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    email    = data.get('email', '').strip()
+    email    = data.get('email', '').strip().lower()
     barangay_id = data.get('barangay_id')
 
-    if not username or not password or not barangay_id:
-        return JsonResponse({'error': 'Username, password, and assigned barangay are required'}, status=400)
+    if not username or not password or not email or not barangay_id:
+        return JsonResponse({'error': 'Username, email, password, and assigned barangay are required'}, status=400)
 
     if User.objects.filter(username=username).exists():
         return JsonResponse({'error': 'Username already exists'}, status=400)
+
+    try:
+        validate_password(password)
+    except ValidationError as exc:
+        return JsonResponse({'error': ' '.join(exc.messages)}, status=400)
 
     _seed_barangays()
     try:

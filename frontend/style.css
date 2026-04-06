@@ -1120,6 +1120,12 @@ body.register-page .login-wrapper {
 }
 .login-alert.show { display: flex; }
 
+.login-alert.success {
+    background: #ecfdf3;
+    border-color: #86efac;
+    color: #166534;
+}
+
 .login-footer {
     text-align: center;
     margin-top: 24px;

@@ -892,6 +892,7 @@
             document.querySelectorAll('.system-admin-only').forEach(el => {
                 el.style.display = data.is_admin ? '' : 'none';
             });
+            window.reportCurrentUser = data;
             return true;
         } catch (error) {
             console.warn('Could not verify current user:', error);
