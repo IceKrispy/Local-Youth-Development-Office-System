@@ -1,0 +1,112 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Barangay Active Account | LYDO Youth Profiling</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'style.css' %}">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</head>
+<body>
+
+<nav class="app-navbar">
+    <button class="btn-navbar-menu" onclick="toggleSidebar()" aria-label="Menu">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+        Menu
+    </button>
+
+    <a class="navbar-brand-area" href="/">
+        <img src="{% static 'images/logo.png' %}" alt="LYDO Logo">
+        <div>
+            <div class="brand-text-main">LYDO Youth Profiling</div>
+            <div class="brand-text-sub">Manolo Fortich, Bukidnon</div>
+        </div>
+    </a>
+
+    <div class="navbar-spacer"></div>
+
+    <div class="navbar-user" id="user-display" style="display:none;">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span id="account-label">Account</span>: <b id="username-span"></b>
+    </div>
+
+    <button id="logout-btn" class="btn-logout" onclick="logout()">Logout</button>
+</nav>
+
+<div id="side-menu" aria-hidden="true">
+    <div class="side-menu-header">
+        <div class="side-menu-logo">
+            <img src="{% static 'images/logo.png' %}" alt="logo">
+            <span>LYDO</span>
+        </div>
+        <button class="btn-close-side" onclick="closeSidebar()" aria-label="Close">&times;</button>
+    </div>
+    <div class="side-menu-body">
+        <div class="side-menu-section">Navigation</div>
+        <a href="/" class="menu-item" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            Dashboard
+        </a>
+        <a href="/reports/" class="menu-item" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Reports
+        </a>
+        <a href="/heatmap/" class="menu-item" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+            Heatmap
+        </a>
+        <a href="/account/" class="menu-item system-admin-only active" style="display:none;" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Barangay Active Account
+        </a>
+    </div>
+</div>
+<div id="side-overlay" class="side-overlay" onclick="closeSidebar()" aria-hidden="true"></div>
+
+<div class="page-body">
+    <div class="page-header">
+        <div>
+            <h1 class="page-header-title">Barangay Active Account</h1>
+            <p class="page-header-sub">Monitor active barangay accounts, review their latest access times, and disable accounts when needed.</p>
+        </div>
+    </div>
+
+    <div id="admin-account-section" class="content-card" style="display:none;">
+        <div class="content-card-header">
+            <div class="content-card-title">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Barangay Active Account
+            </div>
+            <div id="admin-account-summary" class="page-header-sub" style="margin:0;">Loading account activity...</div>
+        </div>
+        <div class="content-card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Barangay</th>
+                            <th>Status</th>
+                            <th>Login Time</th>
+                            <th>Last Logout</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="admin-account-rows"></tbody>
+                </table>
+                <div id="admin-account-empty" class="text-center py-5" style="display:none;color:var(--text-muted);">
+                    No assigned barangay accounts found.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="{% static 'script.js' %}"></script>
+
+</body>
+</html>

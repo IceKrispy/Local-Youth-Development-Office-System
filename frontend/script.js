@@ -3,6 +3,8 @@ let BARANGAYS = [];
 let isLoggedIn = false;
 let allYouths = [];
 let currentBarangayId = null;
+let CURRENT_USER = null;
+let ADMIN_ACTIVITY_REFRESH = null;
 
 window.nextTab = window.nextTab || function(target) { console.warn('nextTab called before initialization', target); };
 window.prevTab = window.prevTab || function(target) { console.warn('prevTab called before initialization', target); };
@@ -120,11 +122,27 @@ function buildSummaryRows(data) {
 document.addEventListener("DOMContentLoaded", async () => {
 	const path = window.location.pathname || '';
 	const onLoginPage = path.endsWith('/login/') || path.endsWith('login.html') || path === '/login' || path === '/login/';
+	const onRegisterPage = path.endsWith('/register/') || path.endsWith('register.html') || path === '/register' || path === '/register/';
+	const onAuthPage = onLoginPage || onRegisterPage;
+	const hasAdminActivitySection = !!document.getElementById('admin-account-section');
+
+	if (onAuthPage) {
+		return;
+	}
 
 	const logged = await checkUserStatus();
-	if (!logged && !onLoginPage) {
+	if (!logged) {
 		window.location.href = '/login/';
 		return;
+	}
+
+	if (CURRENT_USER && CURRENT_USER.is_admin && hasAdminActivitySection) {
+		fetchAdminAccountActivity();
+		if (ADMIN_ACTIVITY_REFRESH) clearInterval(ADMIN_ACTIVITY_REFRESH);
+		ADMIN_ACTIVITY_REFRESH = setInterval(fetchAdminAccountActivity, 30000);
+	} else if (ADMIN_ACTIVITY_REFRESH) {
+		clearInterval(ADMIN_ACTIVITY_REFRESH);
+		ADMIN_ACTIVITY_REFRESH = null;
 	}
 
 	if (document.getElementById('barangay-grid') || document.getElementById('youth-data')) {
@@ -231,12 +249,21 @@ function getYouthById(id) {
 
 function renderDashboard() {
 	const grid = document.getElementById('barangay-grid');
+	const pageSub = document.getElementById('dashboard-page-sub');
 	const counts = {};
 	if (Array.isArray(allYouths)) {
 		allYouths.forEach(y => {
 			const id = String(y.barangay_id);
 			counts[id] = (counts[id] || 0) + 1;
 		});
+	}
+
+	if (pageSub) {
+		if (CURRENT_USER && !CURRENT_USER.is_admin && CURRENT_USER.barangay_name) {
+			pageSub.textContent = `Youth records for ${CURRENT_USER.barangay_name}, Manolo Fortich, Bukidnon`;
+		} else {
+			pageSub.textContent = 'Youth records across 22 barangays of Manolo Fortich, Bukidnon';
+		}
 	}
 
 	const PALETTE = ['#2351a6','#059669','#7c3aed','#d97706','#0284c7','#e11d48','#15803d','#9333ea','#c2410c','#0891b2','#1d4ed8','#b45309'];
@@ -487,33 +514,52 @@ function showDashboard() {
 	document.getElementById('list-view').style.display = 'none';
 }
 
+function showAdminAccountSection() {
+	window.location.href = '/account/';
+}
+
 function checkUserStatus() {
 	return fetch('/api/user/').then(res => res.ok ? res.json() : null).then(data => {
 		const userDisplay = document.getElementById('user-display');
 		const usernameSpan = document.getElementById('username-span');
+		const accountLabel = document.getElementById('account-label');
 		const loginBtn = document.getElementById('login-btn');
 		const logoutBtn = document.getElementById('logout-btn');
+		const adminAccountSection = document.getElementById('admin-account-section');
 
 		if (data && data.is_authenticated) {
 			isLoggedIn = true;
+			CURRENT_USER = data;
 			if (userDisplay) userDisplay.style.display = 'block';
-			if (usernameSpan) usernameSpan.innerText = data.username;
+			if (usernameSpan) {
+				usernameSpan.innerText = data.barangay_name && !data.is_admin
+					? `${data.username} (${data.barangay_name})`
+					: data.username;
+			}
+			if (accountLabel) accountLabel.innerText = data.is_admin ? 'Admin' : 'Account';
 			if (loginBtn) loginBtn.style.display = 'none';
 			if (logoutBtn) logoutBtn.style.display = 'block';
 			document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'inline-block');
+			document.querySelectorAll('.system-admin-only').forEach(el => el.style.display = data.is_admin ? '' : 'none');
+			if (adminAccountSection) adminAccountSection.style.display = data.is_admin ? 'block' : 'none';
 			return true;
 		} else {
 			isLoggedIn = false;
+			CURRENT_USER = null;
 			if (userDisplay) userDisplay.style.display = 'none';
 			if (usernameSpan) usernameSpan.innerText = '';
+			if (accountLabel) accountLabel.innerText = 'Account';
 			if (loginBtn) loginBtn.style.display = 'inline-block';
 			if (logoutBtn) logoutBtn.style.display = 'none';
 			document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+			document.querySelectorAll('.system-admin-only').forEach(el => el.style.display = 'none');
+			if (adminAccountSection) adminAccountSection.style.display = 'none';
 			return false;
 		}
 	}).catch(err => {
 		console.debug('checkUserStatus error:', err);
 		isLoggedIn = false;
+		CURRENT_USER = null;
 		return false;
 	});
 }
@@ -563,6 +609,81 @@ function handleAuth(e) {
 	});
 }
 
+function handleRegister(e) {
+	e.preventDefault();
+	const loadingEl = document.getElementById('register-loading');
+	const textEl = document.getElementById('register-text');
+	const submitBtn = document.getElementById('register-submit');
+	const errorDiv = document.getElementById('register-error');
+	const errorMsg = document.getElementById('register-error-msg');
+
+	const username = (document.getElementById('register-username')?.value || '').trim();
+	const email = (document.getElementById('register-email')?.value || '').trim();
+	const barangayId = document.getElementById('register-barangay')?.value || '';
+	const password = document.getElementById('register-password')?.value || '';
+	const confirmPassword = document.getElementById('register-confirm-password')?.value || '';
+
+	if (errorDiv) errorDiv.classList.remove('show');
+
+	if (!username || !password || !barangayId) {
+		if (errorDiv && errorMsg) {
+			errorMsg.textContent = 'Username, password, and assigned barangay are required.';
+			errorDiv.classList.add('show');
+		}
+		return;
+	}
+
+	if (password !== confirmPassword) {
+		if (errorDiv && errorMsg) {
+			errorMsg.textContent = 'Passwords do not match.';
+			errorDiv.classList.add('show');
+		}
+		return;
+	}
+
+	if (loadingEl) loadingEl.style.display = 'flex';
+	if (textEl) textEl.style.display = 'none';
+	if (submitBtn) submitBtn.disabled = true;
+
+	fetch('/api/register/', {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({
+			username: username,
+			email: email,
+			password: password,
+			barangay_id: barangayId
+		})
+	}).then(res => res.json()).then(data => {
+		if (data.message) {
+			window.location.href = '/';
+			return;
+		}
+
+		if (errorDiv && errorMsg) {
+			errorMsg.textContent = data.error || 'Registration failed. Please try again.';
+			errorDiv.classList.add('show');
+		} else {
+			alert(data.error || 'Registration failed.');
+		}
+
+		if (loadingEl) loadingEl.style.display = 'none';
+		if (textEl) textEl.style.display = 'flex';
+		if (submitBtn) submitBtn.disabled = false;
+	}).catch(err => {
+		if (errorDiv && errorMsg) {
+			errorMsg.textContent = 'Connection error. Please try again.';
+			errorDiv.classList.add('show');
+		} else {
+			alert('Registration failed: ' + (err.message || err));
+		}
+
+		if (loadingEl) loadingEl.style.display = 'none';
+		if (textEl) textEl.style.display = 'flex';
+		if (submitBtn) submitBtn.disabled = false;
+	});
+}
+
 function logout() { fetch('/api/logout/').then(() => window.location.reload()); }
 
 function fetchYouths() {
@@ -575,6 +696,13 @@ function fetchYouths() {
 }
 
 function formatNumber(n) { return (typeof n === 'number') ? n.toLocaleString() : n; }
+
+function formatDateTime(value) {
+	if (!value) return 'Not yet';
+	const dt = new Date(value);
+	if (Number.isNaN(dt.getTime())) return value;
+	return dt.toLocaleString();
+}
 
 function toBool(v) {
 	if (v === true || v === 1 || v === '1' || v === 'true' || v === 'True') return true;
@@ -624,6 +752,101 @@ async function fetchAggregatedStats() {
 }
 
 function setStat(id, value) { const el = document.getElementById(id); if (el) el.innerText = formatNumber(value); }
+
+function renderAdminAccountActivity(payload) {
+	const section = document.getElementById('admin-account-section');
+	const tbody = document.getElementById('admin-account-rows');
+	const empty = document.getElementById('admin-account-empty');
+	const summary = document.getElementById('admin-account-summary');
+	if (!section || !tbody || !empty || !summary) return;
+
+	if (!CURRENT_USER || !CURRENT_USER.is_admin) {
+		section.style.display = 'none';
+		return;
+	}
+
+	section.style.display = 'block';
+	const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+	const activeBarangays = Array.isArray(payload?.active_barangays) ? payload.active_barangays : [];
+	summary.textContent = rows.length
+		? `${payload.active_count || 0} active account(s) right now. Active barangays: ${activeBarangays.length ? activeBarangays.join(', ') : 'none'}.`
+		: 'No assigned barangay accounts available.';
+
+	if (!rows.length) {
+		tbody.innerHTML = '';
+		empty.style.display = 'block';
+		return;
+	}
+
+	empty.style.display = 'none';
+	tbody.innerHTML = rows.map(row => {
+		const statusClass = row.is_logged_in ? 'green' : (row.is_account_active ? 'navy' : 'rose');
+		const statusLabel = row.is_logged_in ? 'Active Now' : (row.is_account_active ? 'Offline' : 'Disabled');
+		const safeUsername = String(row.username).replace(/'/g, "\\'");
+		const actionButton = row.is_account_active
+			? `<button class="btn-tbl delete" onclick="disableBarangayAccount(${row.user_id}, '${safeUsername}')">Disable</button>`
+			: `<button class="btn-tbl view" onclick="enableBarangayAccount(${row.user_id}, '${safeUsername}')">Enable</button>`;
+		return `
+			<tr>
+				<td>${row.username}</td>
+				<td>${row.barangay_name || 'Unassigned'}</td>
+				<td><span class="badge-pill ${statusClass}">${statusLabel}</span></td>
+				<td>${formatDateTime(row.login_time)}</td>
+				<td>${formatDateTime(row.logout_time)}</td>
+				<td>${actionButton}</td>
+			</tr>
+		`;
+	}).join('');
+}
+
+function fetchAdminAccountActivity() {
+	if (!CURRENT_USER || !CURRENT_USER.is_admin) return;
+	if (!document.getElementById('admin-account-section')) return;
+	fetch('/api/admin/account-activity/')
+		.then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to load account activity')))
+		.then(renderAdminAccountActivity)
+		.catch(err => {
+			console.warn('Failed to load admin account activity:', err);
+			const summary = document.getElementById('admin-account-summary');
+			if (summary) summary.textContent = 'Unable to load account activity right now.';
+		});
+}
+
+function disableBarangayAccount(userId, username) {
+	if (!CURRENT_USER || !CURRENT_USER.is_admin) return;
+	if (!confirm(`Disable the account for ${username}?`)) return;
+	fetch('/api/admin/disable-account/', {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({ user_id: userId })
+	}).then(res => res.json()).then(data => {
+		if (data.message) {
+			fetchAdminAccountActivity();
+			return;
+		}
+		alert(data.error || 'Failed to disable account.');
+	}).catch(err => {
+		alert('Failed to disable account: ' + (err.message || err));
+	});
+}
+
+function enableBarangayAccount(userId, username) {
+	if (!CURRENT_USER || !CURRENT_USER.is_admin) return;
+	if (!confirm(`Enable the account for ${username}?`)) return;
+	fetch('/api/admin/enable-account/', {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({ user_id: userId })
+	}).then(res => res.json()).then(data => {
+		if (data.message) {
+			fetchAdminAccountActivity();
+			return;
+		}
+		alert(data.error || 'Failed to enable account.');
+	}).catch(err => {
+		alert('Failed to enable account: ' + (err.message || err));
+	});
+}
 
 function updateYouthSearchPlaceholder() {
 	const input = document.getElementById('searchInput');
@@ -1366,6 +1589,7 @@ function viewFullSummary(id) {
 
 window.openBarangay = openBarangay;
 window.showDashboard = showDashboard;
+window.showAdminAccountSection = showAdminAccountSection;
 window.showLoginModal = showLoginModal;
 window.handleAuth = handleAuth;
 window.logout = logout;
@@ -1377,4 +1601,6 @@ window.saveYouth = saveYouth;
 window.toggleOSY = toggleOSY;
 window.downloadBarangaySummaryCSV = downloadBarangaySummaryCSV;
 window.downloadBarangaySummaryPDF = downloadBarangaySummaryPDF;
+window.disableBarangayAccount = disableBarangayAccount;
+window.enableBarangayAccount = enableBarangayAccount;
 

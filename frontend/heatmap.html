@@ -104,6 +104,9 @@
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 14px;
         }
+        .heatmap-summary-grid.user-summary {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
         .heatmap-stat {
             border: 1px solid var(--border);
             border-radius: var(--r-lg);
@@ -257,6 +260,11 @@
         </div>
     </a>
     <div class="navbar-spacer"></div>
+    <div class="navbar-user" id="user-display" style="display:none;">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span id="account-label">Account</span>: <b id="username-span"></b>
+    </div>
+    <button id="logout-btn" class="btn-logout" onclick="logout()" style="display:none;">Logout</button>
 </nav>
 
 <div id="side-menu" aria-hidden="true">
@@ -280,6 +288,10 @@
         <a href="/heatmap/" class="menu-item active" onclick="closeSidebar();">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
             Heatmap
+        </a>
+        <a href="/account/" class="menu-item system-admin-only" style="display:none;" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Barangay Active Account
         </a>
     </div>
 </div>
@@ -327,13 +339,13 @@
                     <span id="heatmap-rows-chip" class="heatmap-chip">Rows: 22 Barangays</span>
                     <span id="heatmap-age-chip" class="heatmap-chip">Columns: Ages 15 to 30</span>
                 </div>
-                <div class="heatmap-summary-grid">
+                <div id="heatmap-summary-grid" class="heatmap-summary-grid">
                     <div class="heatmap-stat">
                         <div class="heatmap-stat-label">Strongest Hotspot</div>
                         <div id="heatmap-top-hotspot" class="heatmap-stat-value">Loading...</div>
                         <div id="heatmap-top-hotspot-note" class="heatmap-stat-note">Checking category concentration by age.</div>
                     </div>
-                    <div class="heatmap-stat">
+                    <div id="heatmap-top-barangay-card" class="heatmap-stat">
                         <div class="heatmap-stat-label">Most Affected Barangay</div>
                         <div id="heatmap-top-barangay" class="heatmap-stat-value">Loading...</div>
                         <div id="heatmap-top-barangay-note" class="heatmap-stat-note">Summing selected category counts across ages 15 to 30.</div>
@@ -386,7 +398,8 @@
 
     const heatmapState = {
         payload: null,
-        activeMetric: 'unemployed'
+        activeMetric: 'unemployed',
+        currentUser: null
     };
 
     function getMetricMeta(metricKey) {
@@ -458,6 +471,18 @@
         document.getElementById('heatmap-rows-chip').textContent = `Rows: ${rowCount} Barangays`;
         document.getElementById('heatmap-age-chip').textContent =
             ages.length ? `Columns: Ages ${ages[0]} to ${ages[ages.length - 1]}` : 'Columns: Ages 15 to 30';
+    }
+
+    function syncHeatmapSummaryVisibility() {
+        const summaryGrid = document.getElementById('heatmap-summary-grid');
+        const topBarangayCard = document.getElementById('heatmap-top-barangay-card');
+        const isAdmin = !!heatmapState.currentUser?.is_admin;
+        if (topBarangayCard) {
+            topBarangayCard.style.display = isAdmin ? '' : 'none';
+        }
+        if (summaryGrid) {
+            summaryGrid.classList.toggle('user-summary', !isAdmin);
+        }
     }
 
     function updateHeatmapSummary(metricData, ages, meta) {
@@ -613,11 +638,54 @@
         document.getElementById('side-overlay')?.classList.remove('show');
     }
 
+    async function initializeProtectedNav() {
+        try {
+            const response = await fetch('/api/user/');
+            const data = response.ok ? await response.json() : null;
+            if (!data || !data.is_authenticated) {
+                window.location.href = '/login/';
+                return false;
+            }
+
+            const userDisplay = document.getElementById('user-display');
+            const usernameSpan = document.getElementById('username-span');
+            const accountLabel = document.getElementById('account-label');
+            const logoutBtn = document.getElementById('logout-btn');
+
+            if (userDisplay) userDisplay.style.display = 'block';
+            if (usernameSpan) {
+                usernameSpan.innerText = data.barangay_name && !data.is_admin
+                    ? `${data.username} (${data.barangay_name})`
+                    : data.username;
+            }
+            if (accountLabel) accountLabel.innerText = data.is_admin ? 'Admin' : 'Account';
+            if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+            document.querySelectorAll('.system-admin-only').forEach(el => {
+                el.style.display = data.is_admin ? '' : 'none';
+            });
+            heatmapState.currentUser = data;
+            syncHeatmapSummaryVisibility();
+            return true;
+        } catch (error) {
+            console.warn('Could not verify current user:', error);
+            window.location.href = '/login/';
+            return false;
+        }
+    }
+
+    function logout() {
+        fetch('/api/logout/').then(() => window.location.href = '/login/');
+    }
+
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') closeSidebar();
     });
 
-    document.addEventListener('DOMContentLoaded', initHeatmap);
+    document.addEventListener('DOMContentLoaded', async () => {
+        const ready = await initializeProtectedNav();
+        if (!ready) return;
+        initHeatmap();
+    });
 </script>
 </body>
 </html>

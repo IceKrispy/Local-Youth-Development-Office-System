@@ -16,7 +16,8 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count
-from .models import Youth, Barangay
+from django.utils import timezone
+from .models import Youth, Barangay, UserBarangayAssignment, UserAccessLog
 
 # Optional profanity filter (graceful fallback if package not installed)
 try:
@@ -31,6 +32,52 @@ def _contains_profanity(text: str) -> bool:
     if not _PROFANITY_AVAILABLE:
         return False
     return profanity.contains_profanity(text)
+
+
+def _is_system_admin(user) -> bool:
+    return bool(getattr(user, 'is_authenticated', False) and (user.is_staff or user.is_superuser))
+
+
+def _assigned_barangay(user):
+    if not getattr(user, 'is_authenticated', False):
+        return None
+    assignment = getattr(user, 'barangay_assignment', None)
+    return assignment.barangay if assignment else None
+
+
+def _ordered_barangays_for_user(user):
+    ordered = _ordered_barangays()
+    if _is_system_admin(user):
+        return ordered
+    assigned = _assigned_barangay(user)
+    if not assigned:
+        return []
+    return [barangay for barangay in ordered if barangay.id == assigned.id]
+
+
+def _assert_barangay_access(request, barangay):
+    if _is_system_admin(request.user):
+        return None
+    assigned = _assigned_barangay(request.user)
+    if not assigned or assigned.id != barangay.id:
+        return JsonResponse({'error': 'Forbidden for this barangay'}, status=403)
+    return None
+
+
+def _log_user_access(request, user):
+    UserAccessLog.objects.filter(user=user, logout_time__isnull=True).update(logout_time=timezone.now())
+    if not request.session.session_key:
+        request.session.save()
+    assignment = getattr(user, 'barangay_assignment', None)
+    UserAccessLog.objects.create(
+        user=user,
+        barangay=assignment.barangay if assignment else None,
+        session_key=request.session.session_key or '',
+    )
+
+
+def _close_active_access_logs(user):
+    UserAccessLog.objects.filter(user=user, logout_time__isnull=True).update(logout_time=timezone.now())
 
 
 # Public page views
@@ -52,6 +99,14 @@ def login_page(request):
     return render(request, 'login.html')
 
 
+def register_page(request):
+    """Registration page; redirect to dashboard if already authenticated."""
+    if request.user.is_authenticated:
+        return redirect('index')
+    barangays = _ordered_barangays()
+    return render(request, 'register.html', {'barangays': barangays})
+
+
 def reports_page(request, bid=None):
     """Reports page."""
     if not request.user.is_authenticated:
@@ -64,6 +119,15 @@ def heatmap_page(request):
     if not request.user.is_authenticated:
         return redirect('login_page')
     return render(request, 'heatmap.html')
+
+
+def account_page(request):
+    """Admin-only barangay account activity page."""
+    if not request.user.is_authenticated:
+        return redirect('login_page')
+    if not _is_system_admin(request.user):
+        return redirect('index')
+    return render(request, 'account.html')
 
 
 def _choice_labels(field_name):
@@ -429,11 +493,10 @@ def _draw_checkbox_item(pdf, x, top, label, max_width, size=9.5):
     return max(box_size + 8, used_top - top + 2)
 
 
-def _draw_checkbox_list(pdf, x, top, width, title, options, columns=1, size=9.5, row_gap=6):
+def _draw_checkbox_list(pdf, x, top, width, title, options, columns=1, size=9.5, row_gap=6, col_gap=16):
     top = _draw_wrapped_text(pdf, x, top, title, width, size=9.5, bold=True, color=(0.10, 0.22, 0.44))
     top += 6
     columns = max(1, columns)
-    col_gap = 16
     col_width = (width - ((columns - 1) * col_gap)) / columns
     rows = int(math.ceil(len(options) / columns)) if options else 0
     for row in range(rows):
@@ -486,53 +549,176 @@ def _draw_section_banner(pdf, top, title):
 def _build_blank_form_pdf(barangay_name, include_logo=False):
     context = _build_blank_form_context(barangay_name)
     pdf = _SimplePdf()
-    total_pages = 4
+    total_pages = 2
     content_width = pdf.page_width - 72
     half_gap = 18
     half_width = (content_width - half_gap) / 2
     left_x = 36
     right_x = left_x + half_width + half_gap
 
-    # Page 1: Personal Information
+    # Page 1: Personal information + education and work
     pdf.add_page()
     _draw_page_header(pdf, context['barangay_name'], 1, total_pages, include_logo=include_logo)
-    top = 68
+    top = 66
     top = _draw_section_banner(pdf, top, "PERSONAL INFORMATION")
     row_top = top
-    family_width = 200
-    given_width = 200
+    family_width = 182
+    given_width = 182
     middle_width = content_width - family_width - given_width - 24
-    _draw_line_field(pdf, left_x, row_top, family_width, "Family Name")
-    _draw_line_field(pdf, left_x + family_width + 12, row_top, given_width, "Given Name")
-    top = _draw_line_field(pdf, left_x + family_width + given_width + 24, row_top, middle_width, "Middle Initial")
+    _draw_line_field(pdf, left_x, row_top, family_width, "Family Name", line_y_offset=24)
+    _draw_line_field(pdf, left_x + family_width + 12, row_top, given_width, "Given Name", line_y_offset=24)
+    top = _draw_line_field(
+        pdf,
+        left_x + family_width + given_width + 24,
+        row_top,
+        middle_width,
+        "Middle Initial",
+        line_y_offset=24,
+    )
     row_top = top
-    _draw_line_field(pdf, left_x, row_top, 150, "Birthdate")
-    _draw_line_field(pdf, left_x + 170, row_top, 70, "Age")
-    top = _draw_checkbox_list(pdf, left_x + 265, row_top, 130, "Sex", ["Male", "Female"], columns=2, size=9)
-    top = max(top, row_top + 40)
-    top += 6
-    top = _draw_checkbox_list(pdf, left_x, top, content_width, "Civil Status", context['civil_status_options'], columns=3, size=9)
-    top += 2
+    _draw_line_field(pdf, left_x, row_top, 150, "Birthdate", line_y_offset=24)
+    _draw_line_field(pdf, left_x + 170, row_top, 70, "Age", line_y_offset=24)
+    sex_bottom = _draw_checkbox_list(
+        pdf,
+        left_x + 265,
+        row_top,
+        128,
+        "Sex",
+        ["Male", "Female"],
+        columns=2,
+        size=8.8,
+        row_gap=3,
+        col_gap=6,
+    )
+    mobile_bottom = _draw_line_field(
+        pdf,
+        left_x + family_width + given_width + 24,
+        row_top,
+        middle_width,
+        "Mobile Number",
+        line_y_offset=24,
+    )
+    top = max(sex_bottom, mobile_bottom, row_top + 36) + 2
+    top = _draw_checkbox_list(
+        pdf,
+        left_x,
+        top,
+        content_width,
+        "Civil Status",
+        context['civil_status_options'],
+        columns=5,
+        size=8.4,
+        row_gap=3,
+        col_gap=8,
+    )
     row_top = top
-    _draw_line_field(pdf, left_x, row_top, half_width, "Religion")
-    top = _draw_line_field(pdf, right_x, row_top, half_width, "Purok")
+    _draw_line_field(pdf, left_x, row_top, half_width, "Religion", line_y_offset=24)
+    top = _draw_line_field(pdf, right_x, row_top, half_width, "Purok", line_y_offset=24)
     row_top = top
-    _draw_line_field(pdf, left_x, row_top, half_width, "Barangay")
+    _draw_line_field(pdf, left_x, row_top, half_width, "Barangay", line_y_offset=24)
     pdf.text(left_x + 2, pdf.page_height - row_top - 23, context['barangay_name'], size=9.5, bold=True, color=(0.14, 0.19, 0.27))
-    _draw_line_field(pdf, right_x, row_top, half_width, "Municipality")
+    _draw_line_field(pdf, right_x, row_top, half_width, "Municipality", line_y_offset=24)
     pdf.text(right_x + 2, pdf.page_height - row_top - 23, context['municipality_name'], size=9.5, bold=True, color=(0.14, 0.19, 0.27))
-    top = row_top + 34
+    top = row_top + 30
     row_top = top
-    _draw_line_field(pdf, left_x, row_top, half_width, "Province")
+    _draw_line_field(pdf, left_x, row_top, half_width, "Province", line_y_offset=24)
     pdf.text(left_x + 2, pdf.page_height - row_top - 23, context['province_name'], size=9.5, bold=True, color=(0.14, 0.19, 0.27))
-    _draw_line_field(pdf, right_x, row_top, half_width, "Email Address")
-    top = row_top + 34
-    top = _draw_line_field(pdf, left_x, top, half_width, "Mobile Number")
+    _draw_line_field(pdf, right_x, row_top, half_width, "Email Address", line_y_offset=24)
+    top = row_top + 30
 
-    # Page 2: Groups and Needs
+    top += 10
+    top = _draw_section_banner(pdf, top, "EDUCATION AND WORK")
+    top = _draw_checkbox_list(
+        pdf,
+        left_x,
+        top,
+        content_width,
+        "Highest Education",
+        context['education_level_options'],
+        columns=4,
+        size=8.2,
+        row_gap=4,
+    )
+    row_top = top + 2
+    _draw_line_field(pdf, left_x, row_top, half_width, "Course / Degree", line_y_offset=24)
+    top = _draw_line_field(pdf, right_x, row_top, half_width, "School / University", line_y_offset=24)
+    row_top = top
+    _draw_line_field(pdf, left_x, row_top, half_width, "Work Status", line_y_offset=24)
+    scholarship_bottom = _draw_checkbox_list(
+        pdf,
+        right_x,
+        row_top,
+        half_width,
+        "Scholarship",
+        ["Scholarship Beneficiary"],
+        columns=1,
+        size=8.6,
+        row_gap=4,
+    )
+    top = max(row_top + 36, scholarship_bottom)
+    top = _draw_line_field(pdf, right_x, top + 2, half_width, "Scholarship Program", line_y_offset=24)
+
+    top += 10
+    top = _draw_section_banner(pdf, top, "CIVIC AND OTHER")
+    row_top = top
+    left_bottom = _draw_checkbox_list(
+        pdf,
+        left_x,
+        row_top,
+        half_width,
+        "Voter Status",
+        [
+            "SK Voter",
+            "National Voter",
+            "Voted in Last SK Election",
+        ],
+        columns=1,
+        size=8.6,
+        row_gap=4,
+    )
+    right_bottom = _draw_checkbox_list(
+        pdf,
+        right_x,
+        row_top,
+        half_width,
+        "4Ps and Family",
+        ["4Ps Beneficiary"],
+        columns=1,
+        size=8.6,
+        row_gap=4,
+    )
+    right_bottom = _draw_line_field(pdf, right_x, right_bottom + 4, half_width, "Number of Children", line_y_offset=24)
+    top = max(left_bottom, right_bottom) + 8
+    row_top = top
+    left_bottom = _draw_checkbox_list(
+        pdf,
+        left_x,
+        row_top,
+        half_width,
+        "KK Assembly Attendance",
+        ["Attended KK Assembly", "Did not attend"],
+        columns=1,
+        size=8.6,
+        row_gap=4,
+    )
+    left_bottom = _draw_line_field(pdf, left_x, left_bottom + 4, half_width, "If yes, how many times", line_y_offset=24)
+    right_bottom = _draw_checkbox_list(
+        pdf,
+        right_x,
+        row_top,
+        half_width,
+        "If no, reason",
+        context['kk_no_reason_options'],
+        columns=1,
+        size=8.6,
+        row_gap=4,
+    )
+    _draw_line_field(pdf, right_x, right_bottom + 4, half_width, "Other reason / notes", line_y_offset=24)
+
+    # Page 2: Groups and needs + signatures
     pdf.add_page()
     _draw_page_header(pdf, context['barangay_name'], 2, total_pages, include_logo=include_logo)
-    top = 68
+    top = 66
     top = _draw_section_banner(pdf, top, "GROUPS AND NEEDS")
     top = _draw_checkbox_list(
         pdf,
@@ -548,7 +734,10 @@ def _build_blank_form_pdf(barangay_name, include_logo=False):
             "Indigenous People Youth",
             "Youth with Disability",
         ],
-        columns=2,
+        columns=3,
+        size=8.4,
+        row_gap=3,
+        col_gap=10,
     )
     top += 4
     row_top = top
@@ -563,147 +752,75 @@ def _build_blank_form_pdf(barangay_name, include_logo=False):
             "Not willing to enroll",
             *context['osy_program_options'],
         ],
-        columns=1,
-        size=9,
+        columns=2,
+        size=8.0,
+        row_gap=3,
+        col_gap=8,
     )
-    left_bottom = _draw_line_field(pdf, left_x, left_bottom + 2, half_width, "Reason if not enrolling")
-    right_bottom = _draw_line_field(pdf, right_x, row_top, half_width, "Type of Disability")
-    right_bottom = _draw_checkbox_list(
+    left_bottom = _draw_line_field(
         pdf,
-        right_x,
-        right_bottom + 4,
+        left_x,
+        left_bottom + 2,
         half_width,
+        "Reason if not enrolling",
+        line_y_offset=24,
+    )
+    disability_bottom = _draw_line_field(pdf, right_x, row_top, half_width, "Type of Disability", line_y_offset=24)
+    top = max(left_bottom, disability_bottom) + 6
+    top = _draw_checkbox_list(
+        pdf,
+        left_x,
+        top,
+        content_width,
         "Specific Needs",
         ["Mark if applicable", *context['specific_needs_options']],
-        columns=2,
-        size=7.6,
-        row_gap=3,
+        columns=4,
+        size=7.2,
+        row_gap=2,
+        col_gap=10,
     )
-    right_bottom = _draw_line_field(
+    top = _draw_line_field(
         pdf,
-        right_x,
-        right_bottom + 2,
-        half_width,
+        left_x,
+        top + 2,
+        content_width,
         "Others (if not above, specify youth needs)",
+        line_y_offset=24,
     )
-    cultural_top = max(left_bottom, right_bottom) + 10
-    top = _draw_checkbox_list(
+    cultural_top = top + 8
+    left_bottom = _draw_checkbox_list(
         pdf,
         left_x,
         cultural_top,
         half_width,
         "7 Tribes / Indigenous Group",
         context['tribe_options'],
-        columns=1,
-        size=9,
+        columns=3,
+        size=7.6,
+        row_gap=2,
+        col_gap=6,
     )
-    _draw_line_field(pdf, left_x, top + 2, half_width, "Selected Tribe")
-    right_top = _draw_checkbox_list(
+    left_bottom = _draw_line_field(pdf, left_x, left_bottom + 2, half_width, "Selected Tribe", line_y_offset=24)
+    right_bottom = _draw_checkbox_list(
         pdf,
         right_x,
         cultural_top,
         half_width,
         "Muslim Group",
         ["Mark if Muslim", *context['muslim_group_options']],
-        columns=1,
-        size=9,
+        columns=3,
+        size=7.5,
+        row_gap=2,
+        col_gap=6,
     )
-    _draw_line_field(pdf, right_x, right_top + 2, half_width, "Selected Group")
-
-    # Page 3: Education and Work
-    pdf.add_page()
-    _draw_page_header(pdf, context['barangay_name'], 3, total_pages, include_logo=include_logo)
-    top = 68
-    top = _draw_section_banner(pdf, top, "EDUCATION AND WORK")
-    top = _draw_checkbox_list(
-        pdf,
-        left_x,
-        top,
-        content_width,
-        "Highest Education",
-        context['education_level_options'],
-        columns=2,
-        size=9.2,
-    )
-    top += 4
-    row_top = top
-    _draw_line_field(pdf, left_x, row_top, half_width, "Course / Degree")
-    top = _draw_line_field(pdf, right_x, row_top, half_width, "School / University")
-    row_top = top
-    _draw_line_field(pdf, left_x, row_top, half_width, "Work Status")
-    scholarship_top = _draw_checkbox_list(
-        pdf,
-        right_x,
-        row_top,
-        half_width,
-        "Scholarship",
-        ["Scholarship Beneficiary"],
-        columns=1,
-        size=9,
-    )
-    top = max(row_top + 34, scholarship_top)
-    top = _draw_line_field(pdf, right_x, top + 2, half_width, "Scholarship Program")
-
-    # Page 4: Civic and Other
-    pdf.add_page()
-    _draw_page_header(pdf, context['barangay_name'], 4, total_pages, include_logo=include_logo)
-    top = 68
-    top = _draw_section_banner(pdf, top, "CIVIC AND OTHER")
-    row_top = top
-    left_bottom = _draw_checkbox_list(
-        pdf,
-        left_x,
-        row_top,
-        half_width,
-        "Voter Status",
-        [
-            "SK Voter",
-            "National Voter",
-            "Voted in Last SK Election",
-        ],
-        columns=1,
-        size=9.2,
-    )
-    right_bottom = _draw_checkbox_list(
-        pdf,
-        right_x,
-        row_top,
-        half_width,
-        "4Ps and Family",
-        ["4Ps Beneficiary"],
-        columns=1,
-        size=9.2,
-    )
-    right_bottom = _draw_line_field(pdf, right_x, right_bottom + 4, half_width, "Number of Children")
-    top = max(left_bottom, right_bottom) + 10
-    row_top = top
-    left_bottom = _draw_checkbox_list(
-        pdf,
-        left_x,
-        row_top,
-        half_width,
-        "KK Assembly Attendance",
-        ["Attended KK Assembly", "Did not attend"],
-        columns=1,
-        size=9.2,
-    )
-    left_bottom = _draw_line_field(pdf, left_x, left_bottom + 4, half_width, "If yes, how many times")
-    right_bottom = _draw_checkbox_list(
-        pdf,
-        right_x,
-        row_top,
-        half_width,
-        "If no, reason",
-        context['kk_no_reason_options'],
-        columns=1,
-        size=9.2,
-    )
-    right_bottom = _draw_line_field(pdf, right_x, right_bottom + 4, half_width, "Other reason / notes")
-    top = max(left_bottom, right_bottom) + 28
-    pdf.line(left_x, pdf.page_height - top, left_x + half_width - 10, pdf.page_height - top, width=0.8, color=(0.35, 0.42, 0.55))
-    pdf.line(right_x, pdf.page_height - top, right_x + half_width - 10, pdf.page_height - top, width=0.8, color=(0.35, 0.42, 0.55))
-    pdf.text(left_x + 50, pdf.page_height - top - 16, "Signature of Youth Respondent", size=9, color=(0.33, 0.40, 0.50))
-    pdf.text(right_x + 30, pdf.page_height - top - 16, "Signature of Encoder/ LYDO Officer", size=9, color=(0.33, 0.40, 0.50))
+    right_bottom = _draw_line_field(pdf, right_x, right_bottom + 2, half_width, "Selected Group", line_y_offset=24)
+    signature_top = max(left_bottom, right_bottom) + 24 + 216
+    signature_top = min(signature_top, pdf.page_height - 88)
+    signature_top = max(signature_top, max(left_bottom, right_bottom) + 24)
+    pdf.line(left_x, pdf.page_height - signature_top, left_x + half_width - 10, pdf.page_height - signature_top, width=0.8, color=(0.35, 0.42, 0.55))
+    pdf.line(right_x, pdf.page_height - signature_top, right_x + half_width - 10, pdf.page_height - signature_top, width=0.8, color=(0.35, 0.42, 0.55))
+    pdf.text(left_x + 50, pdf.page_height - signature_top - 16, "Signature of Youth Respondent", size=9, color=(0.33, 0.40, 0.50))
+    pdf.text(right_x + 30, pdf.page_height - signature_top - 16, "Signature of Encoder/ LYDO Officer", size=9, color=(0.33, 0.40, 0.50))
 
     return pdf.build()
 
@@ -713,6 +830,9 @@ def download_barangay_blank_form(request, bid):
     """Download one blank youth intake form PDF for the selected barangay."""
     _seed_barangays()
     barangay = get_object_or_404(Barangay, id=bid)
+    access_error = _assert_barangay_access(request, barangay)
+    if access_error:
+        return access_error
     pdf_bytes = _build_blank_form_pdf(barangay.name, include_logo=True)
     filename = f"Youth_Profile_Form_{_safe_export_name(barangay.name)}.pdf"
     response = HttpResponse(pdf_bytes, content_type='application/pdf')
@@ -723,6 +843,8 @@ def download_barangay_blank_form(request, bid):
 @login_required(login_url='/login/')
 def download_blank_form_pack(request):
     """Download a ZIP pack with one printable blank youth form PDF per barangay."""
+    if not _is_system_admin(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
     _seed_barangays()
     barangays = list(Barangay.objects.all().order_by('name'))
 
@@ -758,17 +880,26 @@ def register_view(request):
     username = data.get('username', '').strip()
     password = data.get('password', '')
     email    = data.get('email', '').strip()
+    barangay_id = data.get('barangay_id')
 
-    if not username or not password:
-        return JsonResponse({'error': 'Username and password are required'}, status=400)
+    if not username or not password or not barangay_id:
+        return JsonResponse({'error': 'Username, password, and assigned barangay are required'}, status=400)
 
     if User.objects.filter(username=username).exists():
         return JsonResponse({'error': 'Username already exists'}, status=400)
 
+    _seed_barangays()
+    try:
+        barangay = Barangay.objects.get(id=barangay_id)
+    except Barangay.DoesNotExist:
+        return JsonResponse({'error': 'Selected barangay does not exist'}, status=400)
     user = User.objects.create_user(username=username, password=password, email=email)
+    UserBarangayAssignment.objects.create(user=user, barangay=barangay)
     login(request, user)
+    _log_user_access(request, user)
     return JsonResponse({'message': 'Registered and logged in successfully',
-                         'username': user.username})
+                         'username': user.username,
+                         'barangay_name': barangay.name})
 
 
 @csrf_exempt
@@ -787,15 +918,28 @@ def login_view(request):
     if not username or not password:
         return JsonResponse({'error': 'Username and password are required'}, status=400)
 
+    existing_user = User.objects.filter(username=username).first()
+    if existing_user and not existing_user.is_active:
+        return JsonResponse({'error': 'This account has been disabled by the administrator'}, status=403)
+
     user = authenticate(request, username=username, password=password)
     if user is not None:
         login(request, user)
-        return JsonResponse({'message': 'Login successful', 'username': user.username})
+        _log_user_access(request, user)
+        assignment = getattr(user, 'barangay_assignment', None)
+        return JsonResponse({
+            'message': 'Login successful',
+            'username': user.username,
+            'is_admin': _is_system_admin(user),
+            'barangay_name': assignment.barangay.name if assignment else None,
+        })
 
     return JsonResponse({'error': 'Invalid credentials'}, status=401)
 
 
 def logout_view(request):
+    if request.user.is_authenticated:
+        _close_active_access_logs(request.user)
     logout(request)
     return JsonResponse({'message': 'Logged out successfully'})
 
@@ -803,9 +947,105 @@ def logout_view(request):
 def user_info_view(request):
     """Return current authentication state."""
     if request.user.is_authenticated:
-        return JsonResponse({'is_authenticated': True,
-                             'username': request.user.username})
+        assignment = getattr(request.user, 'barangay_assignment', None)
+        return JsonResponse({
+            'is_authenticated': True,
+            'username': request.user.username,
+            'is_admin': _is_system_admin(request.user),
+            'barangay_id': assignment.barangay_id if assignment else None,
+            'barangay_name': assignment.barangay.name if assignment else None,
+        })
     return JsonResponse({'is_authenticated': False}, status=401)
+
+
+@login_required(login_url='/login/')
+def admin_account_activity_api(request):
+    if not _is_system_admin(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    assignments = UserBarangayAssignment.objects.select_related('user', 'barangay').order_by('barangay__name', 'user__username')
+    rows = []
+    for assignment in assignments:
+        latest_log = assignment.user.access_logs.order_by('-login_time').first()
+        last_logout = assignment.user.access_logs.exclude(logout_time__isnull=True).order_by('-logout_time').first()
+        rows.append({
+            'user_id': assignment.user.id,
+            'username': assignment.user.username,
+            'barangay_id': assignment.barangay.id,
+            'barangay_name': assignment.barangay.name,
+            'is_account_active': assignment.user.is_active,
+            'is_logged_in': bool(latest_log and latest_log.logout_time is None),
+            'login_time': latest_log.login_time.isoformat() if latest_log else None,
+            'logout_time': last_logout.logout_time.isoformat() if last_logout and last_logout.logout_time else None,
+        })
+
+    active_barangays = sorted({row['barangay_name'] for row in rows if row['is_logged_in']})
+    return JsonResponse({
+        'rows': rows,
+        'active_barangays': active_barangays,
+        'active_count': sum(1 for row in rows if row['is_logged_in']),
+    })
+
+
+@csrf_exempt
+@login_required(login_url='/login/')
+def admin_disable_account_api(request):
+    if not _is_system_admin(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST method required'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    user_id = data.get('user_id')
+    if not user_id:
+        return JsonResponse({'error': 'User ID is required'}, status=400)
+
+    try:
+        target_user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return JsonResponse({'error': 'User not found'}, status=404)
+
+    if _is_system_admin(target_user):
+        return JsonResponse({'error': 'Admin accounts cannot be disabled here'}, status=400)
+
+    target_user.is_active = False
+    target_user.save(update_fields=['is_active'])
+    _close_active_access_logs(target_user)
+    return JsonResponse({'message': 'Account disabled successfully'})
+
+
+@csrf_exempt
+@login_required(login_url='/login/')
+def admin_enable_account_api(request):
+    if not _is_system_admin(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST method required'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    user_id = data.get('user_id')
+    if not user_id:
+        return JsonResponse({'error': 'User ID is required'}, status=400)
+
+    try:
+        target_user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return JsonResponse({'error': 'User not found'}, status=404)
+
+    if _is_system_admin(target_user):
+        return JsonResponse({'error': 'Admin accounts cannot be enabled here'}, status=400)
+
+    target_user.is_active = True
+    target_user.save(update_fields=['is_active'])
+    return JsonResponse({'message': 'Account enabled successfully'})
 
 
 # Barangay seed data and summary endpoints
@@ -853,13 +1093,20 @@ def _ordered_barangays():
 
 def barangays_api(request):
     """Return all barangays as a JSON array: [{id, name}, ...]"""
-    data = [{'id': barangay.id, 'name': barangay.name} for barangay in _ordered_barangays()]
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+    data = [{'id': barangay.id, 'name': barangay.name} for barangay in _ordered_barangays_for_user(request.user)]
     return JsonResponse(data, safe=False)
 
 
 def barangay_summary(request, bid):
     """Return aggregated demographic summary for a single barangay."""
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
     barangay = get_object_or_404(Barangay, id=bid)
+    access_error = _assert_barangay_access(request, barangay)
+    if access_error:
+        return access_error
     youths   = Youth.objects.filter(barangay=barangay)
 
     age_counts   = {}
@@ -926,10 +1173,12 @@ def barangay_summary(request, bid):
 
 def demographics_api(request):
     """Per-barangay demographic breakdown used by the interactive reports table."""
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
     _seed_barangays()
 
     metric_keys = ('isy', 'osy', 'yd', 'iy', 'ip', 'wk', 'uy')
-    barangays = list(Barangay.objects.all().order_by('name'))
+    barangays = list(_ordered_barangays_for_user(request.user))
     demo_data = {
         b.name: {
             'total': 0,
@@ -942,8 +1191,10 @@ def demographics_api(request):
         for b in barangays
     }
 
+    allowed_ids = [barangay.id for barangay in barangays]
     for y in (Youth.objects
               .select_related('barangay')
+              .filter(barangay_id__in=allowed_ids)
               .values(
                   'barangay__name', 'sex', 'is_in_school', 'is_osy',
                   'is_working_youth', 'is_unemployed', 'is_pwd', 'is_4ps', 'is_ip'
@@ -1033,13 +1284,16 @@ def _build_barangay_age_heatmap_rows(youths, barangays, age_columns):
 
 def heatmap_api(request):
     """Barangay by age heatmap data for key youth categories."""
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
     age_columns = [str(age) for age in range(15, 31)]
-    barangays = _ordered_barangays()
+    barangays = _ordered_barangays_for_user(request.user)
+    allowed_ids = [barangay.id for barangay in barangays]
 
     metric_queries = {
-        'unemployed': Youth.objects.filter(is_unemployed=True, birthdate__isnull=False),
-        'osy': Youth.objects.filter(is_osy=True, birthdate__isnull=False),
-        'pwd': Youth.objects.filter(is_pwd=True, birthdate__isnull=False),
+        'unemployed': Youth.objects.filter(is_unemployed=True, birthdate__isnull=False, barangay_id__in=allowed_ids),
+        'osy': Youth.objects.filter(is_osy=True, birthdate__isnull=False, barangay_id__in=allowed_ids),
+        'pwd': Youth.objects.filter(is_pwd=True, birthdate__isnull=False, barangay_id__in=allowed_ids),
     }
 
     metrics = {}
@@ -1077,9 +1331,17 @@ def youth_api(request):
     DELETE: remove a profile (auth required)
     """
 
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+
     # GET: list youth profiles
     if request.method == 'GET':
         youths = Youth.objects.select_related('barangay').all()
+        if not _is_system_admin(request.user):
+            assigned = _assigned_barangay(request.user)
+            if not assigned:
+                return JsonResponse([], safe=False)
+            youths = youths.filter(barangay=assigned)
         data = []
         for y in youths:
             data.append({
@@ -1131,10 +1393,6 @@ def youth_api(request):
             })
         return JsonResponse(data, safe=False)
 
-    # All mutating operations require authentication
-    if not request.user.is_authenticated:
-        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
-
     # POST / PUT
     if request.method in ('POST', 'PUT'):
         try:
@@ -1151,6 +1409,9 @@ def youth_api(request):
                     {'error': 'Inappropriate language detected in name.'}, status=400)
 
             barangay = get_object_or_404(Barangay, id=data.get('barangay_id'))
+            access_error = _assert_barangay_access(request, barangay)
+            if access_error:
+                return access_error
 
             def get_bool(key):
                 return bool(data.get(key, False))
@@ -1217,6 +1478,9 @@ def youth_api(request):
             if not youth_id:
                 return JsonResponse({'error': 'ID is required for update'}, status=400)
             youth = get_object_or_404(Youth, id=youth_id)
+            existing_access_error = _assert_barangay_access(request, youth.barangay)
+            if existing_access_error:
+                return existing_access_error
             for key, value in fields.items():
                 setattr(youth, key, value)
             youth.save()
@@ -1234,6 +1498,9 @@ def youth_api(request):
 
         try:
             youth = get_object_or_404(Youth, id=data.get('id'))
+            access_error = _assert_barangay_access(request, youth.barangay)
+            if access_error:
+                return access_error
             youth.delete()
             return JsonResponse({'message': 'Youth profile deleted successfully'})
         except Exception as e:

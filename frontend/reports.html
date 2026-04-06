@@ -452,6 +452,11 @@
         </div>
     </a>
     <div class="navbar-spacer"></div>
+    <div class="navbar-user" id="user-display" style="display:none;">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span id="account-label">Account</span>: <b id="username-span"></b>
+    </div>
+    <button id="logout-btn" class="btn-logout" onclick="logout()" style="display:none;">Logout</button>
 </nav>
 
 <div id="side-menu" aria-hidden="true">
@@ -475,6 +480,10 @@
         <a href="/heatmap/" class="menu-item" onclick="closeSidebar();">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18"></path><path d="M9 3v18"></path><path d="M15 3v18"></path></svg>
             Heatmap
+        </a>
+        <a href="/account/" class="menu-item system-admin-only" style="display:none;" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Barangay Active Account
         </a>
     </div>
 </div>
@@ -858,11 +867,51 @@
         document.getElementById('side-overlay')?.classList.remove('show');
     }
 
+    async function initializeProtectedNav() {
+        try {
+            const response = await fetch('/api/user/');
+            const data = response.ok ? await response.json() : null;
+            if (!data || !data.is_authenticated) {
+                window.location.href = '/login/';
+                return false;
+            }
+
+            const userDisplay = document.getElementById('user-display');
+            const usernameSpan = document.getElementById('username-span');
+            const accountLabel = document.getElementById('account-label');
+            const logoutBtn = document.getElementById('logout-btn');
+
+            if (userDisplay) userDisplay.style.display = 'block';
+            if (usernameSpan) {
+                usernameSpan.innerText = data.barangay_name && !data.is_admin
+                    ? `${data.username} (${data.barangay_name})`
+                    : data.username;
+            }
+            if (accountLabel) accountLabel.innerText = data.is_admin ? 'Admin' : 'Account';
+            if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+            document.querySelectorAll('.system-admin-only').forEach(el => {
+                el.style.display = data.is_admin ? '' : 'none';
+            });
+            return true;
+        } catch (error) {
+            console.warn('Could not verify current user:', error);
+            window.location.href = '/login/';
+            return false;
+        }
+    }
+
+    function logout() {
+        fetch('/api/logout/').then(() => window.location.href = '/login/');
+    }
+
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') closeSidebar();
     });
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
+        const ready = await initializeProtectedNav();
+        if (!ready) return;
+
         renderCategoryOptions();
         renderCategoryChips();
 

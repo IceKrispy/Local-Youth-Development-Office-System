@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 class Barangay(models.Model):
@@ -5,6 +6,28 @@ class Barangay(models.Model):
     
     def __str__(self):
         return self.name
+
+
+class UserBarangayAssignment(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='barangay_assignment')
+    barangay = models.ForeignKey(Barangay, on_delete=models.CASCADE, related_name='assigned_users')
+
+    def __str__(self):
+        return f"{self.user.username} - {self.barangay.name}"
+
+
+class UserAccessLog(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='access_logs')
+    barangay = models.ForeignKey(Barangay, null=True, blank=True, on_delete=models.SET_NULL, related_name='access_logs')
+    session_key = models.CharField(max_length=80, blank=True, db_index=True)
+    login_time = models.DateTimeField(auto_now_add=True)
+    logout_time = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-login_time']
+
+    def __str__(self):
+        return f"{self.user.username} @ {self.login_time:%Y-%m-%d %H:%M:%S}"
 
 class Youth(models.Model):
     # --- DEMOGRAPHICS ---
