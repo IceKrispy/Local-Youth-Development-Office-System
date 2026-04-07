@@ -137,7 +137,10 @@
             line-height: 1.2;
         }
         .report-table-scroll {
-            overflow-x: auto;
+            overflow: auto;
+            max-height: min(78vh, 1120px);
+            position: relative;
+            scrollbar-gutter: stable both-edges;
         }
         .report-metric-table {
             width: 100%;
@@ -148,16 +151,23 @@
             font-size: 0.76rem;
         }
         .report-metric-table thead th {
-            background: #f8faff;
-            color: var(--text-muted);
-            font-size: 0.66rem;
-            font-weight: 700;
+            background: linear-gradient(180deg, #f3f7ff 0%, #edf3ff 100%);
+            color: #526788;
+            font-size: 0.78rem;
+            font-weight: 800;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
-            padding: 9px 6px;
-            border-bottom: 1px solid var(--border);
+            letter-spacing: 0.06em;
+            padding: 7px 6px;
+            line-height: 1.08;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.28);
             white-space: nowrap;
             text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            box-shadow:
+                inset 0 -1px 0 rgba(148, 163, 184, 0.22),
+                0 8px 14px -12px rgba(15, 37, 88, 0.42);
         }
         .report-metric-table tbody td {
             padding: 8px 6px;
@@ -169,7 +179,21 @@
         .report-metric-table tbody tr:last-child td {
             border-bottom: none;
         }
+        .report-metric-table tbody tr.metric-repeat-row td {
+            background: #fcfdff;
+            color: #7687a3;
+            font-size: 0.66rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 3px 6px;
+            line-height: 1.04;
+            border-bottom: 1px solid var(--border);
+        }
         .report-metric-table tbody tr:hover td {
+            background: #fbfcff;
+        }
+        .report-metric-table tbody tr.metric-repeat-row:hover td {
             background: #fbfcff;
         }
         .report-metric-table th.active-col,
@@ -311,28 +335,12 @@
             gap: 6px;
             justify-content: center;
         }
-        .metric-group-sub {
-            display: block;
-            margin-top: 2px;
-            font-size: 0.56rem;
-            font-weight: 600;
-            letter-spacing: 0.03em;
-            text-transform: none;
-            color: var(--text-light);
-        }
         .compact-metric-cell {
             min-width: 74px;
-        }
-        .compact-metric-total {
-            font-size: 0.74rem;
-            font-weight: 800;
-            color: var(--navy);
-            line-height: 1;
         }
         .compact-metric-split {
             display: grid;
             gap: 5px;
-            margin-top: 6px;
             font-size: 0.76rem;
             line-height: 1.2;
         }
@@ -393,6 +401,8 @@
             left: 0;
             z-index: 3;
             background: #fff;
+            min-width: 46px;
+            width: 46px;
         }
         .report-metric-table th:nth-child(2),
         .report-metric-table td:nth-child(2) {
@@ -400,16 +410,131 @@
             left: 46px;
             z-index: 2;
             background: #fff;
+            min-width: 250px;
+            width: 250px;
             box-shadow: 8px 0 12px -12px rgba(15, 37, 88, 0.28);
         }
+        .report-metric-table th:nth-child(3),
+        .report-metric-table td:nth-child(3) {
+            position: sticky;
+            left: 296px;
+            z-index: 2;
+            background: #fff;
+            min-width: 96px;
+            width: 96px;
+            box-shadow: 10px 0 14px -14px rgba(15, 37, 88, 0.34);
+        }
         .report-metric-table thead th:first-child,
-        .report-metric-table thead th:nth-child(2) {
-            background: #f8faff;
-            z-index: 4;
+        .report-metric-table thead th:nth-child(2),
+        .report-metric-table thead th:nth-child(3) {
+            background: linear-gradient(180deg, #f3f7ff 0%, #edf3ff 100%);
+            z-index: 7;
+        }
+        .report-metric-table tbody tr.metric-repeat-row td:first-child {
+            background: #fbfcff;
+        }
+        .report-metric-table tbody tr.metric-repeat-row td:nth-child(2) {
+            background: #fbfcff;
+            box-shadow: 8px 0 12px -12px rgba(15, 37, 88, 0.28);
+        }
+        .report-metric-table tbody tr.metric-repeat-row td:nth-child(3) {
+            background: #fbfcff;
+            box-shadow: 10px 0 14px -14px rgba(15, 37, 88, 0.34);
         }
         .report-metric-table tbody tr:hover td:first-child,
-        .report-metric-table tbody tr:hover td:nth-child(2) {
+        .report-metric-table tbody tr:hover td:nth-child(2),
+        .report-metric-table tbody tr:hover td:nth-child(3) {
             background: #fbfcff;
+        }
+        .reports-overall-panel {
+            border-top: 1px solid var(--border);
+            background: linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
+            padding: 18px 18px 20px;
+        }
+        .reports-overall-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+        .reports-overall-title {
+            font-size: 0.98rem;
+            font-weight: 800;
+            color: var(--navy);
+            margin: 0;
+        }
+        .reports-overall-note {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin: 3px 0 0;
+        }
+        .reports-overall-total {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 16px;
+            background: #eef4ff;
+            border: 1px solid rgba(35, 81, 166, 0.14);
+            color: var(--navy);
+            font-weight: 800;
+        }
+        .reports-overall-total strong {
+            font-size: 1.1rem;
+        }
+        .reports-overall-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+            gap: 12px;
+        }
+        .reports-overall-card {
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: #fff;
+            padding: 14px 14px 12px;
+            box-shadow: 0 10px 22px rgba(15, 37, 88, 0.06);
+        }
+        .reports-overall-card .metric-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 0.74rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+        .reports-overall-card .metric-total {
+            margin-top: 10px;
+            font-size: 1.45rem;
+            line-height: 1;
+            font-weight: 900;
+            color: var(--navy);
+        }
+        .reports-overall-card .metric-breakdown {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .reports-overall-card .metric-breakdown span {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 5px 10px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 800;
+        }
+        .reports-overall-card .metric-breakdown .male {
+            color: #2563eb;
+            background: rgba(37, 99, 235, 0.1);
+        }
+        .reports-overall-card .metric-breakdown .female {
+            color: #e11d48;
+            background: rgba(225, 29, 72, 0.1);
         }
         .empty-report-state {
             padding: 36px 18px;
@@ -584,7 +709,8 @@
         { key: 'yd', label: '4Ps Beneficiary', short: '4PS', color: '#e11d48' },
         { key: 'iy', label: 'Youth with Disability', short: 'PWD', color: '#7c3aed' },
         { key: 'ip', label: 'IP Youth', short: 'IP', color: '#0ea5a4' },
-        { key: 'wk', label: 'Working Youth', short: 'WK', color: '#059669' },
+        { key: 'mu', label: 'Muslim Youth', short: 'MU', color: '#14b8a6' },
+        { key: 'wk', label: 'Working Youth', short: 'WY', color: '#059669' },
         { key: 'uy', label: 'Unemployed Youth', short: 'UY', color: '#64748b' }
     ];
 
@@ -675,6 +801,64 @@
         note.textContent = `Showing ${rows.length} barangays in official legend order. Highest right now for ${selectedMeta.label}: ${top.name} (${value}, ${topBreakdown.male} male / ${topBreakdown.female} female).`;
     }
 
+    function buildOverallSummaryPanel() {
+        if (!window.reportCurrentUser || !window.reportCurrentUser.is_admin || !reportRows.length) {
+            return '';
+        }
+
+        const totals = reportRows.reduce((acc, row) => {
+            acc.totalYouth += toNumber(row.totalYouth);
+            acc.maleTotal += toNumber(row.maleTotal);
+            acc.femaleTotal += toNumber(row.femaleTotal);
+            METRIC_ORDER.forEach(metric => {
+                const detail = row.categories[metric.key] || {};
+                acc.categories[metric.key].male += toNumber(detail.male);
+                acc.categories[metric.key].female += toNumber(detail.female);
+            });
+            return acc;
+        }, {
+            totalYouth: 0,
+            maleTotal: 0,
+            femaleTotal: 0,
+            categories: Object.fromEntries(METRIC_ORDER.map(metric => [metric.key, { male: 0, female: 0 }]))
+        });
+
+        const categoryCards = METRIC_ORDER.map(metric => {
+            const breakdown = totals.categories[metric.key];
+            const total = toNumber(breakdown.male) + toNumber(breakdown.female);
+            return `
+                <div class="reports-overall-card">
+                    <div class="metric-label">
+                        <span class="metric-group-dot" style="background:${metric.color};"></span>
+                        ${metric.short}
+                    </div>
+                    <div class="metric-total">${total}</div>
+                    <div class="metric-breakdown">
+                        <span class="male">M ${breakdown.male}</span>
+                        <span class="female">F ${breakdown.female}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="reports-overall-panel">
+                <div class="reports-overall-header">
+                    <div>
+                        <h3 class="reports-overall-title">22 Barangays Overall Totals</h3>
+                        <p class="reports-overall-note">Combined youth count and category totals across all barangays in the system.</p>
+                    </div>
+                    <div class="reports-overall-total">
+                        <span>Total Youth</span>
+                        <strong>${totals.totalYouth}</strong>
+                        <span>${totals.maleTotal} M / ${totals.femaleTotal} F</span>
+                    </div>
+                </div>
+                <div class="reports-overall-grid">${categoryCards}</div>
+            </div>
+        `;
+    }
+
     function buildCompactGenderRatio(row) {
         if (!row.totalYouth) {
             return `
@@ -721,9 +905,19 @@
                     <span class="metric-group-dot" style="background:${metric.color};"></span>
                     ${metric.short}
                 </span>
-                <span class="metric-group-sub">T / M-F</span>
             </th>
         `).join('');
+
+        const repeatHeaderRow = `
+            <tr class="metric-repeat-row" aria-hidden="true">
+                <td>#</td>
+                <td>Barangay</td>
+                <td class="${selectedCategory === 'all' ? 'active-col' : ''}">Total</td>
+                ${METRIC_ORDER.map(metric => `
+                    <td class="${selectedCategory === metric.key ? 'active-col' : ''}">${metric.short}</td>
+                `).join('')}
+            </tr>
+        `;
 
         const bodyRows = rows.map((row, index) => {
             const score = scoreForRow(row);
@@ -738,7 +932,6 @@
                 const activeClass = selectedCategory === metric.key ? 'active-col' : '';
                 return `
                     <td class="compact-metric-cell ${activeClass}">
-                        <div class="compact-metric-total">${total}</div>
                         <div class="compact-metric-split">
                             <span class="male">M ${detail.male}</span>
                             <span class="female">F ${detail.female}</span>
@@ -759,12 +952,16 @@
                     <td class="total-cell ${selectedCategory === 'all' ? 'active-col' : ''}">
                         <div class="total-stack">
                             <span class="metric-pill total">${row.totalYouth}</span>
-                            <div class="total-breakdown">${row.maleTotal} M / ${row.femaleTotal} F</div>
                         </div>
                     </td>
                     ${metricCells}
                 </tr>
             `;
+        }).map((rowMarkup, index) => {
+            if (index > 0 && index % 8 === 0) {
+                return `${repeatHeaderRow}${rowMarkup}`;
+            }
+            return rowMarkup;
         }).join('');
 
         shell.innerHTML = `
@@ -781,6 +978,7 @@
                     <tbody>${bodyRows}</tbody>
                 </table>
             </div>
+            ${buildOverallSummaryPanel()}
         `;
     }
 

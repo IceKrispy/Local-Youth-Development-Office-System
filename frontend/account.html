@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Barangay Account Management | LYDO Youth Profiling</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{% static 'style.css' %}">
+    <link rel="stylesheet" href="{% static 'style.css' %}?v=20260407-account-status-spacing">
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </head>
 <body>
@@ -150,6 +150,7 @@
                             </button>
                             <div class="register-select-panel" id="admin-account-barangay-panel" role="listbox" aria-labelledby="admin-account-barangay-trigger"></div>
                         </div>
+                        <p id="admin-account-barangay-status" class="login-helper-text account-status-helper">Select a barangay without an existing account.</p>
                     </div>
 
                     <div class="login-field">
@@ -186,7 +187,7 @@
     </div>
 </div>
 
-<script src="{% static 'script.js' %}?v=20260407-talent-sports-map"></script>
+<script src="{% static 'script.js' %}?v=20260407-admin-account-indicator-2"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     const createBtn = document.getElementById('create-admin-account-btn');

@@ -6,9 +6,14 @@ let allYouths = [];
 let currentBarangayId = null;
 let CURRENT_USER = null;
 let ADMIN_ACTIVITY_REFRESH = null;
+let YOUTH_DATA_REFRESH = null;
+let LIST_VIEW_REFRESH = null;
 let ADMIN_ACCOUNT_BARANGAYS = [];
 let ADMIN_ACCOUNT_ROWS = [];
 let ADMIN_ACCOUNT_MODAL = null;
+let TRANSFER_CONFIRM_MODAL = null;
+let TRANSFER_CONFIRM_RESOLVER = null;
+const YOUTH_MODAL_DRAFT_STORAGE_PREFIX = 'lydo-youth-modal-draft';
 
 const YOUTH_BARANGAY_MOVE_GROUPS = [
 	['Alae', 'Mantibugao', 'Mambatangan'],
@@ -20,24 +25,36 @@ const YOUTH_BARANGAY_MOVE_GROUPS = [
 ];
 
 const SPORT_PREFERENCE_OPTIONS = [
-	'Soccer',
+	'Arnis',
+	'Badminton',
+	'Baseball',
 	'Basketball',
-	'Volleyball',
-	'Baseball / Softball',
-	'Swimming',
+	'Billiards',
+	'BJJ',
+	'Boxing',
+	'Chess',
+	'E-Sports',
+	'Football',
 	'Gymnastics',
-	'Martial Arts (Karate, Taekwondo, BJJ)',
-	'Tennis / Pickleball',
-	'Track and Field'
+	'Karate',
+	'Martial Arts',
+	'Pickleball',
+	'Soccer',
+	'Softball',
+	'Swimming',
+	'Taekwondo',
+	'Tennis',
+	'Track and Field',
+	'Volleyball',
 ];
 
 const TALENT_PREFERENCE_OPTIONS = [
-	'Musical Instruments (Piano, Guitar, Violin, etc.)',
-	'Vocals / Choir',
-	'Dance',
 	'Acting / Drama',
+	'Dance',
 	'Drawing & Painting',
-	'Pottery & Sculpting'
+	'Musical Instruments (Piano, Guitar, Violin, etc.)',
+	'Pottery & Sculpting',
+	'Vocals / Choir'
 ];
 
 window.nextTab = window.nextTab || function(target) { console.warn('nextTab called before initialization', target); };
@@ -368,6 +385,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 	initAdminBarangayDropdown();
 	initYouthBarangayDropdown();
+	initTransferConfirmModal();
 	renderPreferenceCheckboxGroup('sports-preference-options', 'sport-pref', SPORT_PREFERENCE_OPTIONS);
 	renderPreferenceCheckboxGroup('talent-preference-options', 'talent-pref', TALENT_PREFERENCE_OPTIONS);
 
@@ -395,6 +413,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		fetchBarangays();
 		fetchTransferBarangays().catch(err => console.warn('Could not load transfer barangays:', err));
 		fetchYouths();
+		startYouthDataAutoRefresh();
 	}
 	updateTabState();
 	attachAutoToggles(); 
@@ -413,6 +432,21 @@ document.addEventListener("DOMContentLoaded", async () => {
 	});
 });
 
+document.addEventListener('visibilitychange', () => {
+	if (!isLoggedIn || document.hidden) return;
+	fetchYouths();
+});
+
+window.addEventListener('focus', () => {
+	if (!isLoggedIn) return;
+	fetchYouths();
+});
+
+window.addEventListener('storage', (event) => {
+	if (event.key !== 'lydo-youth-transfer' || !isLoggedIn) return;
+	fetchYouths();
+});
+
 function attachAutoToggles() {
 	const ids = ['disability_type','specific_needs_condition','scholarship_program','kk_assembly_times','kk_assembly_no_reason','number_of_children', 'tribe_name', 'muslim_group'];
 	ids.forEach(id => {
@@ -423,7 +457,18 @@ function attachAutoToggles() {
 	});
 
 	const modal = document.getElementById('youthModal');
-	if (modal) modal.addEventListener('shown.bs.modal', () => setTimeout(updateAutoTogglesState, 10));
+	if (modal) {
+		modal.addEventListener('shown.bs.modal', () => setTimeout(updateAutoTogglesState, 10));
+	}
+
+	const form = document.getElementById('youthForm');
+	if (form) {
+		const persistDraftHandler = () => {
+			setTimeout(() => persistYouthModalDraft(), 0);
+		};
+		form.addEventListener('input', persistDraftHandler);
+		form.addEventListener('change', persistDraftHandler);
+	}
 
 	const birthdateInput = document.getElementById('birthdate');
 	if (birthdateInput) {
@@ -492,7 +537,7 @@ function updateAutoTogglesState() {
 }
 
 function fetchBarangays() {
-	fetch('/api/barangays/').then(res => res.json()).then(data => {
+	fetch('/api/barangays/', { cache: 'no-store' }).then(res => res.json()).then(data => {
 		if (Array.isArray(data) && data.length) {
 			BARANGAYS = data;
 		}
@@ -575,7 +620,7 @@ function filterBarangayGrid(term) {
 }
 
 async function fetchBarangaySummary(bid) {
-	const res = await fetch(`/api/barangay_summary/${bid}/`);
+	const res = await fetch(`/api/barangay_summary/${bid}/?_=${Date.now()}`, { cache: 'no-store' });
 	if (!res.ok) throw new Error('Failed to fetch summary: ' + res.status);
 	return res.json();
 }
@@ -794,6 +839,7 @@ function initYouthBarangayDropdown() {
 
 function openBarangay(id, name) {
 	currentBarangayId = id;
+	startListViewAutoRefresh();
 	document.getElementById('current-barangay-title').innerText = `${name} Youth Records`;
 	document.getElementById('dashboard-view').style.display = 'none';
 	document.getElementById('list-view').style.display = 'block';
@@ -826,6 +872,7 @@ function openBarangay(id, name) {
 }
 
 function showDashboard() {
+	stopListViewAutoRefresh();
 	currentBarangayId = null;
 	document.getElementById('dashboard-view').style.display = 'block';
 	document.getElementById('list-view').style.display = 'none';
@@ -927,7 +974,7 @@ function handleAuth(e) {
 }
 
 function fetchTransferBarangays() {
-	return fetch('/api/barangays/all/').then(res => res.json()).then(data => {
+	return fetch('/api/barangays/all/', { cache: 'no-store' }).then(res => res.json()).then(data => {
 		if (Array.isArray(data) && data.length) {
 			TRANSFER_BARANGAYS = data;
 		}
@@ -1023,12 +1070,58 @@ function handleRegister(e) {
 function logout() { fetch('/api/logout/').then(() => window.location.reload()); }
 
 function fetchYouths() {
-	fetch('/api/youth/').then(res => res.json()).then(data => {
+	fetch(`/api/youth/?_=${Date.now()}`, { cache: 'no-store' }).then(res => res.json()).then(data => {
 		allYouths = data;
 		renderTopStats();
 		renderDashboard();
 		if(currentBarangayId) filterTable();
 	});
+}
+
+function stopYouthDataAutoRefresh() {
+	if (YOUTH_DATA_REFRESH) {
+		clearInterval(YOUTH_DATA_REFRESH);
+		YOUTH_DATA_REFRESH = null;
+	}
+}
+
+function startYouthDataAutoRefresh() {
+	stopYouthDataAutoRefresh();
+	if (!isLoggedIn) return;
+	if (!document.getElementById('barangay-grid') && !document.getElementById('youth-data')) return;
+
+	YOUTH_DATA_REFRESH = setInterval(() => {
+		if (document.hidden) return;
+		fetchYouths();
+	}, 3000);
+}
+
+function stopListViewAutoRefresh() {
+	if (LIST_VIEW_REFRESH) {
+		clearInterval(LIST_VIEW_REFRESH);
+		LIST_VIEW_REFRESH = null;
+	}
+}
+
+function startListViewAutoRefresh() {
+	stopListViewAutoRefresh();
+	if (!isLoggedIn || !currentBarangayId) return;
+	LIST_VIEW_REFRESH = setInterval(() => {
+		if (document.hidden) return;
+		fetchYouths();
+	}, 2000);
+}
+
+function notifyYouthTransfer(targetBarangayId, targetBarangayName) {
+	try {
+		localStorage.setItem('lydo-youth-transfer', JSON.stringify({
+			target_barangay_id: targetBarangayId,
+			target_barangay_name: targetBarangayName,
+			ts: Date.now()
+		}));
+	} catch (error) {
+		console.warn('Could not publish youth transfer update:', error);
+	}
 }
 
 function formatNumber(n) { return (typeof n === 'number') ? n.toLocaleString() : n; }
@@ -1104,6 +1197,9 @@ function renderAdminAccountActivity(payload) {
 	section.style.display = 'block';
 	const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 	ADMIN_ACCOUNT_ROWS = rows;
+	if ($id('admin-account-barangay-panel')) {
+		populateAdminAccountBarangays(val('admin-account-barangay'));
+	}
 	const activeBarangays = Array.isArray(payload?.active_barangays) ? payload.active_barangays : [];
 	summary.textContent = rows.length
 		? `${rows.length} account(s) total. ${payload.active_count || 0} active right now. Active barangays: ${activeBarangays.length ? activeBarangays.join(', ') : 'none'}.`
@@ -1190,15 +1286,32 @@ function populateAdminAccountBarangays(selectedId = '') {
 	const hiddenInput = $id('admin-account-barangay');
 	const label = $id('admin-account-barangay-label');
 	const panel = $id('admin-account-barangay-panel');
+	const status = $id('admin-account-barangay-status');
 	if (!hiddenInput || !label || !panel) return;
 
 	const normalizedSelected = String(selectedId || '');
 	const selectedBarangay = ADMIN_ACCOUNT_BARANGAYS.find(barangay => String(barangay.id) === normalizedSelected);
+	const selectedRow = ADMIN_ACCOUNT_ROWS.find(row => String(row.barangay_id) === normalizedSelected);
 	hiddenInput.value = normalizedSelected;
 	label.textContent = selectedBarangay ? selectedBarangay.name : 'Select barangay';
+	if (status) {
+		if (selectedBarangay && selectedRow) {
+			status.textContent = `${selectedBarangay.name} already has an account: ${selectedRow.username}`;
+			status.style.color = 'var(--danger)';
+		} else if (selectedBarangay) {
+			status.textContent = `${selectedBarangay.name} is available for a new account.`;
+			status.style.color = 'var(--success)';
+		} else {
+			status.textContent = 'Select a barangay without an existing account.';
+			status.style.color = '';
+		}
+	}
 	panel.innerHTML = ADMIN_ACCOUNT_BARANGAYS.map(barangay => {
 		const isSelected = String(barangay.id) === normalizedSelected ? ' selected' : '';
-		return `<button type="button" class="register-select-option${isSelected}" data-value="${barangay.id}" data-label="${barangay.name}" role="option">${barangay.name}</button>`;
+		const existingRow = ADMIN_ACCOUNT_ROWS.find(row => String(row.barangay_id) === String(barangay.id));
+		const isOccupied = !!existingRow;
+		const occupiedBadge = isOccupied ? ` <span style="font-size:.78rem;color:var(--danger);">(Has account)</span>` : '';
+		return `<button type="button" class="register-select-option${isSelected}" data-value="${barangay.id}" data-label="${barangay.name}" data-occupied="${isOccupied ? 'true' : 'false'}" role="option">${barangay.name}${occupiedBadge}</button>`;
 	}).join('');
 }
 
@@ -1280,10 +1393,20 @@ function initAdminBarangayDropdown() {
 	panel.addEventListener('click', (event) => {
 		const option = event.target.closest('.register-select-option');
 		if (!option) return;
+		const isEditMode = !!val('admin-account-user-id').trim();
+		if (option.dataset.occupied === 'true' && !option.classList.contains('selected') && !isEditMode) {
+			const existingRow = ADMIN_ACCOUNT_ROWS.find(row => String(row.barangay_id) === String(option.dataset.value || ''));
+			showAdminAccountFormError(existingRow
+				? `${option.dataset.label || 'This barangay'} already has an account: ${existingRow.username}.`
+				: `${option.dataset.label || 'This barangay'} already has an account.`);
+			return;
+		}
 		hiddenInput.value = option.dataset.value || '';
 		label.textContent = option.dataset.label || 'Select barangay';
 		panel.querySelectorAll('.register-select-option').forEach(item => item.classList.remove('selected'));
 		option.classList.add('selected');
+		showAdminAccountFormError('');
+		populateAdminAccountBarangays(hiddenInput.value);
 		setOpen(false);
 	});
 
@@ -1353,6 +1476,12 @@ function submitAdminAccountForm(e) {
 
 	if (!username || !barangayId) {
 		showAdminAccountFormError('Username and assigned barangay are required.');
+		return;
+	}
+
+	const occupiedRow = ADMIN_ACCOUNT_ROWS.find(row => String(row.barangay_id) === String(barangayId));
+	if (occupiedRow && (!isEdit || String(occupiedRow.user_id) !== String(userId))) {
+		showAdminAccountFormError(`${occupiedRow.barangay_name} already has an account: ${occupiedRow.username}.`);
 		return;
 	}
 
@@ -1494,20 +1623,184 @@ function setYouthBarangayEditable(isEditable) {
 	}
 }
 
-function openModal() {
-	document.getElementById('youthForm').reset();
-	document.getElementById('youth-id').value = '';
-	populateBarangayDropdown(BARANGAYS, currentBarangayId || '');
+function getYouthModalDraftStorageKey() {
+	const username = CURRENT_USER?.username || 'guest';
+	const barangayId = String(currentBarangayId || CURRENT_USER?.barangay_id || 'all');
+	return `${YOUTH_MODAL_DRAFT_STORAGE_PREFIX}:${username}:${barangayId}`;
+}
+
+function clearYouthModalDraft() {
+	try {
+		window.sessionStorage.removeItem(getYouthModalDraftStorageKey());
+	} catch (error) {
+		console.warn('Could not clear youth modal draft:', error);
+	}
+}
+
+function buildYouthModalDraft() {
+	if (val('youth-id')) return null;
+	return {
+		name: val('name'),
+		birthdate: val('birthdate'),
+		sex: val('sex'),
+		civil_status: val('civil_status'),
+		religion: val('religion'),
+		barangay_id: val('barangay_id') || String(currentBarangayId || ''),
+		purok: val('purok'),
+		email: val('email'),
+		contact_number: val('contact_number'),
+		is_in_school: chk('is_in_school'),
+		is_osy: chk('is_osy'),
+		osy_willing_to_enroll: chk('osy_willing_to_enroll'),
+		osy_program_type: val('osy_program_type'),
+		osy_reason_no_enroll: val('osy_reason_no_enroll'),
+		is_working_youth: chk('is_working_youth'),
+		is_unemployed_youth: chk('is_unemployed_youth'),
+		is_pwd: chk('is_pwd'),
+		disability_type: val('disability_type'),
+		has_specific_needs: chk('has_specific_needs'),
+		specific_needs_condition: val('specific_needs_condition'),
+		is_ip: chk('is_ip'),
+		tribe_name: val('tribe_name'),
+		is_muslim: chk('is_muslim'),
+		muslim_group: val('muslim_group'),
+		education_level: val('education_level'),
+		course: val('course'),
+		school_name: val('school_name'),
+		is_scholar: chk('is_scholar'),
+		scholarship_program: val('scholarship_program'),
+		work_status: val('work_status'),
+		sports_preferences: collectPreferenceSelections('sport-pref', SPORT_PREFERENCE_OPTIONS),
+		talent_preferences: collectPreferenceSelections('talent-pref', TALENT_PREFERENCE_OPTIONS),
+		sports_preference_other: val('sports_preference_other'),
+		talent_preference_other: val('talent_preference_other'),
+		registered_voter_sk: chk('registered_voter_sk'),
+		registered_voter_national: chk('registered_voter_national'),
+		is_non_voter: chk('is_non_voter'),
+		voted_last_sk: chk('voted_last_sk'),
+		attended_kk_assembly: chk('attended_kk_assembly'),
+		kk_assembly_times: val('kk_assembly_times'),
+		kk_assembly_no_reason: val('kk_assembly_no_reason'),
+		is_4ps: chk('is_4ps'),
+		number_of_children: val('number_of_children')
+	};
+}
+
+function persistYouthModalDraft() {
+	const draft = buildYouthModalDraft();
+	if (!draft) return;
+	try {
+		window.sessionStorage.setItem(getYouthModalDraftStorageKey(), JSON.stringify(draft));
+	} catch (error) {
+		console.warn('Could not persist youth modal draft:', error);
+	}
+}
+
+function restoreYouthModalDraft() {
+	let rawDraft = null;
+	try {
+		rawDraft = window.sessionStorage.getItem(getYouthModalDraftStorageKey());
+	} catch (error) {
+		console.warn('Could not read youth modal draft:', error);
+		return false;
+	}
+	if (!rawDraft) return false;
+
+	let draft = null;
+	try {
+		draft = JSON.parse(rawDraft);
+	} catch (error) {
+		clearYouthModalDraft();
+		return false;
+	}
+	if (!draft || typeof draft !== 'object') {
+		clearYouthModalDraft();
+		return false;
+	}
+
+	const mappings = {
+		'name': draft.name,
+		'birthdate': draft.birthdate,
+		'sex': draft.sex,
+		'civil_status': draft.civil_status,
+		'religion': draft.religion,
+		'purok': draft.purok,
+		'email': draft.email,
+		'contact_number': draft.contact_number,
+		'osy_program_type': draft.osy_program_type,
+		'osy_reason_no_enroll': draft.osy_reason_no_enroll,
+		'disability_type': draft.disability_type,
+		'specific_needs_condition': draft.specific_needs_condition,
+		'tribe_name': draft.tribe_name,
+		'muslim_group': draft.muslim_group,
+		'education_level': draft.education_level,
+		'course': draft.course,
+		'school_name': draft.school_name,
+		'scholarship_program': draft.scholarship_program,
+		'work_status': draft.work_status,
+		'sports_preference_other': draft.sports_preference_other,
+		'talent_preference_other': draft.talent_preference_other,
+		'kk_assembly_times': draft.kk_assembly_times,
+		'kk_assembly_no_reason': draft.kk_assembly_no_reason,
+		'number_of_children': draft.number_of_children
+	};
+	Object.entries(mappings).forEach(([id, value]) => setVal(id, value));
+
+	const checks = ['is_in_school','is_osy','osy_willing_to_enroll','is_working_youth','is_unemployed_youth','is_pwd','has_specific_needs','is_ip','is_muslim','is_scholar','registered_voter_sk','registered_voter_national','is_non_voter','voted_last_sk','attended_kk_assembly','is_4ps'];
+	checks.forEach(id => setChk(id, !!draft[id]));
+
+	populateBarangayDropdown(BARANGAYS, draft.barangay_id || currentBarangayId || '');
 	setYouthBarangayEditable(false);
+	applyPreferenceSelections('sport-pref', SPORT_PREFERENCE_OPTIONS, draft.sports_preferences || []);
+	applyPreferenceSelections('talent-pref', TALENT_PREFERENCE_OPTIONS, draft.talent_preferences || []);
+	syncNonVoterCheckbox('is_non_voter');
 	toggleOSY();
 	updateAutoTogglesState();
 	updateBirthdateEligibilityState();
+	return true;
+}
+
+function resetYouthModalState() {
+	const form = $id('youthForm');
+	if (form) form.reset();
+
+	setVal('youth-id', '');
+	populateBarangayDropdown(BARANGAYS, currentBarangayId || '');
+	setYouthBarangayEditable(false);
+	applyPreferenceSelections('sport-pref', SPORT_PREFERENCE_OPTIONS, []);
+	applyPreferenceSelections('talent-pref', TALENT_PREFERENCE_OPTIONS, []);
+	syncNonVoterCheckbox('is_non_voter');
+	toggleOSY();
+	updateAutoTogglesState();
+	updateBirthdateEligibilityState();
+
+	document.querySelectorAll('.temp-modal-alert').forEach(el => el.remove());
 	document.querySelectorAll('.edit-save-btn').forEach(btn => btn.style.display = 'none');
+	document.querySelectorAll('.add-save-btn').forEach(btn => btn.style.display = '');
+
 	if (typeof switchTab === 'function') {
-		switchTab('tab-personal',
-			document.querySelector('.modal-tab-btn[onclick*="tab-personal"]'));
+		switchTab(
+			'tab-personal',
+			document.querySelector('.modal-tab-btn[onclick*="tab-personal"]')
+		);
 	}
+}
+
+function openModal() {
+	resetYouthModalState();
+	restoreYouthModalDraft();
 	new bootstrap.Modal(document.getElementById('youthModal')).show();
+}
+
+function cancelYouthModal() {
+	clearYouthModalDraft();
+	resetYouthModalState();
+	const modalInstance = bootstrap.Modal.getInstance(document.getElementById('youthModal'));
+	if (modalInstance) {
+		modalInstance.hide();
+		return;
+	}
+	new bootstrap.Modal(document.getElementById('youthModal')).hide();
 }
 
 function editYouth(id) {
@@ -1559,6 +1852,7 @@ function editYouth(id) {
 		updateAutoTogglesState();
 		updateBirthdateEligibilityState();
 		document.querySelectorAll('.edit-save-btn').forEach(btn => btn.style.display = '');
+		document.querySelectorAll('.add-save-btn').forEach(btn => btn.style.display = 'none');
 		if (typeof switchTab === 'function') {
 			switchTab('tab-personal',
 				document.querySelector('.modal-tab-btn[onclick*="tab-personal"]'));
@@ -1641,6 +1935,8 @@ function saveYouth(e) {
 	}
 
 	const existingId = getVal('youth-id');
+	let transferTargetBarangayId = null;
+	let transferTargetBarangayName = '';
 	if (existingId && !(CURRENT_USER && CURRENT_USER.is_admin)) {
 		const existingYouth = getYouthById(parseInt(existingId, 10));
 		const currentBarangayName = existingYouth?.barangay_name || getBarangayNameById(existingYouth?.barangay_id);
@@ -1649,13 +1945,82 @@ function saveYouth(e) {
 			&& normalizeBarangayName(currentBarangayName) !== normalizeBarangayName(targetBarangayName);
 
 		if (isBarangayChanged) {
-			const confirmed = confirm(
-				`${existingYouth?.name || 'This youth'} is currently registered in ${currentBarangayName}.\n\n` +
-				`Move the barangay address to ${targetBarangayName}?\n\n` +
-				`Only the current barangay holding this record can do this transfer.`
-			);
-			if (!confirmed) return;
-			data.confirm_barangay_transfer = true;
+			transferTargetBarangayId = data.barangay_id;
+			transferTargetBarangayName = targetBarangayName;
+			showTransferConfirmDialog({
+				message: `${existingYouth?.name || 'This youth'} is currently registered in ${currentBarangayName}. Move the youth record to ${targetBarangayName}?`,
+				helper: 'Only the barangay currently holding this record can do this transfer. Once confirmed, the youth will leave the current barangay list and appear under the new barangay account.',
+				currentBarangay: currentBarangayName,
+				targetBarangay: targetBarangayName
+			}).then(confirmed => {
+				if (!confirmed) return;
+				data.confirm_barangay_transfer = true;
+				if (existingId) data.id = parseInt(existingId);
+				const method = data.id ? 'PUT' : 'POST';
+				const submitYouthRequest = (payload, allowRetry = true) => {
+					fetch('/api/youth/', {
+						method: method,
+						headers: {'Content-Type': 'application/json'},
+						body: JSON.stringify(payload)
+					}).then(res => {
+						return res.text().then(text => {
+							try {
+								const obj = JSON.parse(text);
+								if (res.ok) {
+									bootstrap.Modal.getInstance(document.getElementById('youthModal')).hide();
+									clearYouthModalDraft();
+									resetYouthModalState();
+									if (transferTargetBarangayId) {
+										notifyYouthTransfer(transferTargetBarangayId, transferTargetBarangayName);
+									}
+									fetchYouths();
+								} else {
+									console.error('API error JSON:', obj);
+									if (obj && obj.age_blocked) {
+										showModalAlert(obj.error || 'This person is over 30 and can no longer be stored in the youth system.');
+										const birthdateInput = $id('birthdate');
+										if (birthdateInput) birthdateInput.focus();
+									} else if (obj && obj.duplicate_youth) {
+										showModalAlert(obj.error || 'Duplicate youth record detected in another barangay.');
+										const nameInput = $id('name');
+										if (nameInput) nameInput.focus();
+									} else if (obj && obj.requires_confirmation) {
+										showTransferConfirmDialog({
+											message: obj.error || 'Please confirm the barangay transfer before saving.',
+											helper: 'Confirming will continue the transfer and update the youth record to the selected barangay.',
+											currentBarangay: obj.current_barangay || currentBarangayName || 'Current barangay',
+											targetBarangay: obj.target_barangay || targetBarangayName || 'New barangay'
+										}).then(reconfirmed => {
+											if (reconfirmed && allowRetry) {
+												submitYouthRequest({ ...payload, confirm_barangay_transfer: true }, false);
+												return;
+											}
+											showModalAlert(obj.error || 'Please confirm the barangay transfer before saving.');
+										});
+									} else {
+										alert(obj.error || JSON.stringify(obj));
+									}
+								}
+							} catch (err) {
+								console.error('Non-JSON response:', text);
+								if (res.ok) {
+									bootstrap.Modal.getInstance(document.getElementById('youthModal')).hide();
+									clearYouthModalDraft();
+									resetYouthModalState();
+									fetchYouths();
+								} else {
+									alert(text);
+								}
+							}
+						});
+					}).catch(err => {
+						console.error('Network/fetch error:', err);
+						alert('Network error: ' + err.message);
+					});
+				};
+				submitYouthRequest(data);
+			});
+			return;
 		}
 	}
 	if (!existingId && !validateTab('#tab-civic')) {
@@ -1665,47 +2030,68 @@ function saveYouth(e) {
 	if (existingId) data.id = parseInt(existingId);
 
 	const method = data.id ? 'PUT' : 'POST';
-	fetch('/api/youth/', {
-		method: method,
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify(data)
-	}).then(res => {
-		return res.text().then(text => {
-			try {
-				const obj = JSON.parse(text);
-				if (res.ok) {
-					bootstrap.Modal.getInstance(document.getElementById('youthModal')).hide();
-					fetchYouths();
-				} else {
-					console.error('API error JSON:', obj);
-					if (obj && obj.age_blocked) {
-						showModalAlert(obj.error || 'This person is over 30 and can no longer be stored in the youth system.');
-						const birthdateInput = $id('birthdate');
-						if (birthdateInput) birthdateInput.focus();
-					} else if (obj && obj.duplicate_youth) {
-						showModalAlert(obj.error || 'Duplicate youth record detected in another barangay.');
-						const nameInput = $id('name');
-						if (nameInput) nameInput.focus();
-					} else if (obj && obj.requires_confirmation) {
-						showModalAlert(obj.error || 'Please confirm the barangay transfer before saving.');
+	const submitYouthRequest = (payload, allowRetry = true) => {
+		fetch('/api/youth/', {
+			method: method,
+			headers: {'Content-Type': 'application/json'},
+			body: JSON.stringify(payload)
+		}).then(res => {
+			return res.text().then(text => {
+				try {
+					const obj = JSON.parse(text);
+					if (res.ok) {
+						bootstrap.Modal.getInstance(document.getElementById('youthModal')).hide();
+						clearYouthModalDraft();
+						resetYouthModalState();
+						if (transferTargetBarangayId) {
+							notifyYouthTransfer(transferTargetBarangayId, transferTargetBarangayName);
+						}
+						fetchYouths();
 					} else {
-						alert(obj.error || JSON.stringify(obj));
+						console.error('API error JSON:', obj);
+						if (obj && obj.age_blocked) {
+							showModalAlert(obj.error || 'This person is over 30 and can no longer be stored in the youth system.');
+							const birthdateInput = $id('birthdate');
+							if (birthdateInput) birthdateInput.focus();
+						} else if (obj && obj.duplicate_youth) {
+							showModalAlert(obj.error || 'Duplicate youth record detected in another barangay.');
+							const nameInput = $id('name');
+							if (nameInput) nameInput.focus();
+						} else if (obj && obj.requires_confirmation) {
+							showTransferConfirmDialog({
+								message: obj.error || 'Please confirm the barangay transfer before saving.',
+								helper: 'Confirming will continue the transfer and update the youth record to the selected barangay.',
+								currentBarangay: obj.current_barangay || 'Current barangay',
+								targetBarangay: obj.target_barangay || transferTargetBarangayName || 'New barangay'
+							}).then(confirmed => {
+								if (confirmed && allowRetry) {
+									submitYouthRequest({ ...payload, confirm_barangay_transfer: true }, false);
+									return;
+								}
+								showModalAlert(obj.error || 'Please confirm the barangay transfer before saving.');
+							});
+						} else {
+							alert(obj.error || JSON.stringify(obj));
+						}
+					}
+				} catch (err) {
+					console.error('Non-JSON response:', text);
+					if (res.ok) {
+						bootstrap.Modal.getInstance(document.getElementById('youthModal')).hide();
+						clearYouthModalDraft();
+						resetYouthModalState();
+						fetchYouths();
+					} else {
+						alert(text);
 					}
 				}
-			} catch (err) {
-				console.error('Non-JSON response:', text);
-				if (res.ok) {
-					bootstrap.Modal.getInstance(document.getElementById('youthModal')).hide();
-					fetchYouths();
-				} else {
-					alert(text);
-				}
-			}
+			});
+		}).catch(err => {
+			console.error('Network/fetch error:', err);
+			alert('Network error: ' + err.message);
 		});
-	}).catch(err => {
-		console.error('Network/fetch error:', err);
-		alert('Network error: ' + err.message);
-	});
+	};
+	submitYouthRequest(data);
 }
 
 function toggleOSY() {
@@ -1739,6 +2125,78 @@ function showModalAlert(msg) {
 	el.textContent = msg;
 	modalBody.insertBefore(el, modalBody.firstChild);
 	setTimeout(() => el.remove(), 3500);
+}
+
+function initTransferConfirmModal() {
+	const modalEl = $id('transferConfirmModal');
+	if (!modalEl || typeof bootstrap === 'undefined') return;
+	TRANSFER_CONFIRM_MODAL = new bootstrap.Modal(modalEl, {
+		backdrop: 'static',
+		keyboard: false
+	});
+
+	const cancelBtn = $id('transfer-confirm-cancel');
+	const approveBtn = $id('transfer-confirm-approve');
+
+	if (cancelBtn) {
+		cancelBtn.addEventListener('click', () => {
+			if (TRANSFER_CONFIRM_RESOLVER) TRANSFER_CONFIRM_RESOLVER(false);
+			TRANSFER_CONFIRM_RESOLVER = null;
+			TRANSFER_CONFIRM_MODAL.hide();
+		});
+	}
+
+	if (approveBtn) {
+		approveBtn.addEventListener('click', () => {
+			if (TRANSFER_CONFIRM_RESOLVER) TRANSFER_CONFIRM_RESOLVER(true);
+			TRANSFER_CONFIRM_RESOLVER = null;
+			TRANSFER_CONFIRM_MODAL.hide();
+		});
+	}
+
+	modalEl.addEventListener('hidden.bs.modal', () => {
+		if (TRANSFER_CONFIRM_RESOLVER) {
+			TRANSFER_CONFIRM_RESOLVER(false);
+			TRANSFER_CONFIRM_RESOLVER = null;
+		}
+	});
+}
+
+function showTransferConfirmDialog({
+	title = 'Confirm Barangay Transfer',
+	message = 'Confirm this youth transfer.',
+	helper = 'The youth record will be removed from the current barangay list and transferred to the selected barangay.',
+	currentBarangay = 'Current barangay',
+	targetBarangay = 'New barangay'
+} = {}) {
+	if (!TRANSFER_CONFIRM_MODAL) {
+		const fallback = confirm(`${message}\n\nPress OK to continue the transfer, or Cancel to keep the current barangay.`);
+		return Promise.resolve(fallback);
+	}
+
+	const titleEl = $id('transfer-confirm-title');
+	const messageEl = $id('transfer-confirm-message');
+	const helperEl = $id('transfer-confirm-helper');
+	const currentEl = $id('transfer-confirm-current');
+	const targetEl = $id('transfer-confirm-target');
+
+	if (titleEl) {
+		const iconMarkup = `
+			<span style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;background:rgba(255,255,255,.14);">
+				<svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 5 7 7-7 7"/><path d="M5 5v14"/></svg>
+			</span>
+		`;
+		titleEl.innerHTML = `${iconMarkup}${title}`;
+	}
+	if (messageEl) messageEl.textContent = message;
+	if (helperEl) helperEl.textContent = helper;
+	if (currentEl) currentEl.textContent = currentBarangay;
+	if (targetEl) targetEl.textContent = targetBarangay;
+
+	return new Promise(resolve => {
+		TRANSFER_CONFIRM_RESOLVER = resolve;
+		TRANSFER_CONFIRM_MODAL.show();
+	});
 }
 
 function updateTabState() {

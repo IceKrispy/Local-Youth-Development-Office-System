@@ -68,6 +68,13 @@ def _assert_barangay_access(request, barangay):
     return None
 
 
+def _barangay_account_exists(barangay, exclude_user_id=None):
+    assignments = UserBarangayAssignment.objects.filter(barangay=barangay)
+    if exclude_user_id is not None:
+        assignments = assignments.exclude(user_id=exclude_user_id)
+    return assignments.exists()
+
+
 def _log_user_access(request, user):
     UserAccessLog.objects.filter(user=user, logout_time__isnull=True).update(logout_time=timezone.now())
     if not request.session.session_key:
@@ -141,24 +148,36 @@ def talent_sports_map_page(request):
 
 
 SPORT_PREFERENCE_OPTIONS = [
-    'Soccer',
+    'Arnis',
+    'Badminton',
+    'Baseball',
     'Basketball',
-    'Volleyball',
-    'Baseball / Softball',
-    'Swimming',
+    'Billiards',
+    'BJJ',
+    'Boxing',
+    'Chess',
+    'E-Sports',
+    'Football',
     'Gymnastics',
-    'Martial Arts (Karate, Taekwondo, BJJ)',
-    'Tennis / Pickleball',
+    'Karate',
+    'Martial Arts',
+    'Pickleball',
+    'Soccer',
+    'Softball',
+    'Swimming',
+    'Taekwondo',
+    'Tennis',
     'Track and Field',
+    'Volleyball',
 ]
 
 TALENT_PREFERENCE_OPTIONS = [
-    'Musical Instruments (Piano, Guitar, Violin, etc.)',
-    'Vocals / Choir',
-    'Dance',
     'Acting / Drama',
+    'Dance',
     'Drawing & Painting',
+    'Musical Instruments (Piano, Guitar, Violin, etc.)',
     'Pottery & Sculpting',
+    'Vocals / Choir',
 ]
 
 OTHER_SPORTS_LABEL = 'Other Sports'
@@ -189,8 +208,8 @@ def _build_blank_form_context(barangay_name):
         'osy_program_options': _choice_labels('osy_program_type'),
         'specific_needs_options': _choice_labels('specific_needs_condition'),
         'kk_no_reason_options': _choice_labels('kk_assembly_no_reason'),
-        'sports_preference_options': SPORT_PREFERENCE_OPTIONS,
-        'talent_preference_options': TALENT_PREFERENCE_OPTIONS,
+        'sports_preference_options': sorted(SPORT_PREFERENCE_OPTIONS, key=str.casefold),
+        'talent_preference_options': sorted(TALENT_PREFERENCE_OPTIONS, key=str.casefold),
     }
 
 
@@ -1068,7 +1087,7 @@ def _build_blank_form_pdf(barangay_name, include_logo=False):
         cultural_top,
         half_width,
         "7 Tribes / Indigenous Group",
-        context['tribe_options'],
+        ["Mark if not part of the 7 tribes", *context['tribe_options']],
         columns=3,
         size=7.6,
         row_gap=2,
@@ -1081,7 +1100,7 @@ def _build_blank_form_pdf(barangay_name, include_logo=False):
         cultural_top,
         half_width,
         "Muslim Group",
-        ["Mark if Muslim", *context['muslim_group_options']],
+        ["Mark if not a Muslim", *context['muslim_group_options']],
         columns=3,
         size=7.5,
         row_gap=2,
@@ -1096,8 +1115,8 @@ def _build_blank_form_pdf(barangay_name, include_logo=False):
         half_width,
         "Talent / Sports Preference - Sports",
         context['sports_preference_options'],
-        columns=2,
-        size=7.4,
+        columns=3,
+        size=6.9,
         row_gap=2,
         col_gap=8,
     )
@@ -1215,6 +1234,8 @@ def register_view(request):
         barangay = Barangay.objects.get(id=barangay_id)
     except Barangay.DoesNotExist:
         return JsonResponse({'error': 'Selected barangay does not exist'}, status=400)
+    if _barangay_account_exists(barangay):
+        return JsonResponse({'error': f'{barangay.name} already has an assigned account'}, status=400)
     user = User.objects.create_user(username=username, password=password, email='')
     UserBarangayAssignment.objects.create(user=user, barangay=barangay)
     return JsonResponse({
@@ -1410,6 +1431,8 @@ def admin_update_account_api(request):
         barangay = Barangay.objects.get(id=barangay_id)
     except Barangay.DoesNotExist:
         return JsonResponse({'error': 'Selected barangay does not exist'}, status=400)
+    if _barangay_account_exists(barangay, exclude_user_id=target_user.id):
+        return JsonResponse({'error': f'{barangay.name} already has an assigned account'}, status=400)
 
     target_user.username = username
     update_fields = ['username']
@@ -1616,6 +1639,9 @@ def barangay_summary(request, bid):
         'ip':                youths.filter(is_ip=True).count(),
         'ip_male':           youths.filter(is_ip=True, sex='Male').count(),
         'ip_female':         youths.filter(is_ip=True, sex='Female').count(),
+        'muslim':            youths.filter(is_muslim=True).count(),
+        'muslim_male':       youths.filter(is_muslim=True, sex='Male').count(),
+        'muslim_female':     youths.filter(is_muslim=True, sex='Female').count(),
         'osy':               youths.filter(is_osy=True).count(),
         'osy_male':          youths.filter(is_osy=True, sex='Male').count(),
         'osy_female':        youths.filter(is_osy=True, sex='Female').count(),
@@ -1629,7 +1655,7 @@ def demographics_api(request):
     _purge_aged_out_youths()
     _seed_barangays()
 
-    metric_keys = ('isy', 'osy', 'yd', 'iy', 'ip', 'wk', 'uy')
+    metric_keys = ('isy', 'osy', 'yd', 'iy', 'ip', 'mu', 'wk', 'uy')
     barangays = list(_ordered_barangays_for_user(request.user))
     demo_data = {
         b.name: {
@@ -1649,7 +1675,7 @@ def demographics_api(request):
               .filter(barangay_id__in=allowed_ids)
               .values(
                   'barangay__name', 'sex', 'is_in_school', 'is_osy',
-                  'is_working_youth', 'is_unemployed', 'is_pwd', 'is_4ps', 'is_ip'
+                  'is_working_youth', 'is_unemployed', 'is_pwd', 'is_4ps', 'is_ip', 'is_muslim'
               )):
         name = y['barangay__name']
         if name not in demo_data:
@@ -1677,6 +1703,8 @@ def demographics_api(request):
             matches.append('iy')
         if y['is_ip']:
             matches.append('ip')
+        if y['is_muslim']:
+            matches.append('mu')
         if y['is_4ps']:
             matches.append('yd')
 
@@ -1917,9 +1945,10 @@ def youth_api(request):
                     {'error': 'Inappropriate language detected in name.'}, status=400)
 
             barangay = get_object_or_404(Barangay, id=data.get('barangay_id'))
-            access_error = _assert_barangay_access(request, barangay)
-            if access_error:
-                return access_error
+            if request.method == 'POST':
+                access_error = _assert_barangay_access(request, barangay)
+                if access_error:
+                    return access_error
 
             def get_bool(key):
                 return bool(data.get(key, False))
