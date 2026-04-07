@@ -1,0 +1,650 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Talent/Sports Map | LYDO Youth Profiling</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'style.css' %}">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        .page-body {
+            max-width: min(96vw, 1680px);
+        }
+        .talent-map-layout {
+            display: grid;
+            gap: 18px;
+        }
+        .talent-map-toolbar .report-card-body {
+            display: grid;
+            gap: 14px;
+        }
+        .talent-map-toolbar-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .talent-map-description {
+            max-width: 920px;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin: 0;
+        }
+        .talent-map-chip-row,
+        .custom-entry-list {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .talent-map-chip,
+        .custom-entry-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(31, 79, 163, 0.16);
+            background: rgba(31, 79, 163, 0.08);
+            color: var(--navy);
+            font-size: 0.75rem;
+            font-weight: 700;
+        }
+        .talent-map-metric-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .talent-map-metric-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 12px;
+            border: 1px solid rgba(31, 79, 163, 0.16);
+            border-radius: 12px;
+            background: #ffffff;
+            color: var(--navy);
+            font-size: 0.8rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease, background-color .12s ease;
+        }
+        .talent-map-metric-button:hover {
+            transform: translateY(-1px);
+            border-color: rgba(31, 79, 163, 0.32);
+            box-shadow: 0 10px 24px rgba(15, 37, 88, 0.08);
+        }
+        .talent-map-metric-button.active {
+            background: rgba(31, 79, 163, 0.1);
+            border-color: rgba(31, 79, 163, 0.38);
+            color: #153b7d;
+            box-shadow: inset 0 0 0 1px rgba(31, 79, 163, 0.08);
+        }
+        .talent-map-gradient-legend {
+            display: grid;
+            gap: 8px;
+            min-width: 220px;
+        }
+        .talent-map-gradient-bar {
+            height: 14px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #f8fbff 0%, #cbdaf6 35%, #7fa6e6 68%, #1f4fa3 100%);
+            border: 1px solid rgba(15, 37, 88, 0.08);
+        }
+        .talent-map-gradient-labels {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            font-weight: 700;
+        }
+        .talent-map-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+        }
+        .talent-map-stat {
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
+            background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(244,247,255,.96));
+            padding: 14px 16px;
+        }
+        .talent-map-stat-label {
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-light);
+        }
+        .talent-map-stat-value {
+            margin-top: 6px;
+            font-family: 'Bricolage Grotesque', sans-serif;
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: var(--navy);
+        }
+        .talent-map-stat-note {
+            margin-top: 4px;
+            font-size: 0.76rem;
+            color: var(--text-muted);
+        }
+        .talent-map-shell {
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
+            overflow: hidden;
+            background: #fff;
+        }
+        .talent-map-scroll {
+            overflow: auto;
+        }
+        .talent-map-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            min-width: 1220px;
+        }
+        .talent-map-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 4;
+            background: #f8faff;
+            color: var(--text-muted);
+            font-size: 0.68rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 10px 8px;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        .talent-map-table tbody td,
+        .talent-map-table tbody th {
+            border-bottom: 1px solid var(--border);
+            border-right: 1px solid rgba(228, 234, 245, 0.78);
+        }
+        .talent-map-rowhead {
+            position: sticky;
+            left: 0;
+            z-index: 3;
+            min-width: 260px;
+            max-width: 260px;
+            background: #fff;
+            padding: 10px 12px;
+            text-align: left;
+        }
+        .talent-map-rowname {
+            font-weight: 800;
+            color: var(--navy);
+            line-height: 1.15;
+        }
+        .talent-map-rowsub {
+            margin-top: 4px;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
+        .talent-map-total-head,
+        .talent-map-total-cell {
+            position: sticky;
+            right: 0;
+            z-index: 3;
+            background: #fff;
+        }
+        .talent-map-total-cell {
+            min-width: 72px;
+            text-align: center;
+            font-weight: 800;
+            color: var(--navy);
+            font-size: 0.82rem;
+        }
+        .talent-map-cell {
+            width: 58px;
+            min-width: 58px;
+            height: 52px;
+            text-align: center;
+            vertical-align: middle;
+            font-weight: 800;
+            font-size: 0.82rem;
+            color: var(--navy);
+        }
+        .talent-map-empty {
+            padding: 42px 18px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.92rem;
+        }
+        @media (max-width: 991px) {
+            .talent-map-summary-grid {
+                grid-template-columns: 1fr;
+            }
+            .talent-map-gradient-legend {
+                min-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<nav class="app-navbar">
+    <button class="btn-navbar-menu" onclick="toggleSidebar()" aria-label="Menu">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+        Menu
+    </button>
+    <a class="navbar-brand-area" href="/">
+        <img src="{% static 'images/logo.png' %}" alt="LYDO Logo">
+        <div>
+            <div class="brand-text-main">LYDO Youth Profiling</div>
+            <div class="brand-text-sub">Manolo Fortich, Bukidnon</div>
+        </div>
+    </a>
+    <div class="navbar-spacer"></div>
+    <div class="navbar-user" id="user-display" style="display:none;">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span id="account-label">Account</span>: <b id="username-span"></b>
+    </div>
+    <button id="logout-btn" class="btn-logout" onclick="logout()" style="display:none;">Logout</button>
+</nav>
+
+<div id="side-menu" aria-hidden="true">
+    <div class="side-menu-header">
+        <div class="side-menu-logo">
+            <img src="{% static 'images/logo.png' %}" alt="logo">
+            <span>LYDO</span>
+        </div>
+        <button class="btn-close-side" onclick="closeSidebar()" aria-label="Close">&times;</button>
+    </div>
+    <div class="side-menu-body">
+        <div class="side-menu-section">Navigation</div>
+        <a href="/" class="menu-item" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            Dashboard
+        </a>
+        <a href="/reports/" class="menu-item" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Reports
+        </a>
+        <a href="/heatmap/" class="menu-item" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+            Heatmap
+        </a>
+        <a href="/talentsport/" class="menu-item active" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6-4.36-4.25 6.03-.88z"/></svg>
+            Talent/Sports Map
+        </a>
+        <a href="/account/" class="menu-item system-admin-only" style="display:none;" onclick="closeSidebar();">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Barangay Account Management
+        </a>
+    </div>
+</div>
+<div id="side-overlay" class="side-overlay" onclick="closeSidebar()" aria-hidden="true"></div>
+
+<div class="page-body">
+    <div class="page-header">
+        <div>
+            <h1 id="talent-map-page-title" class="page-header-title">Talent/Sports Map</h1>
+            <p id="talent-map-page-sub" class="page-header-sub">Preference hotspot view by age from 15 to 30 based on the youth profile form</p>
+        </div>
+    </div>
+
+    <div class="talent-map-layout">
+        <div class="report-card talent-map-toolbar">
+            <div class="report-card-header">
+                <div class="report-card-icon">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3l2.7 5.47 6.03.88-4.36 4.25 1.03 6-5.4-2.84-5.4 2.84 1.03-6-4.36-4.25 6.03-.88z"></path></svg>
+                </div>
+                <div>
+                    <div class="report-card-title">Preference Hotspots by Age</div>
+                    <div id="talent-map-toolbar-subtitle" style="font-size:.78rem;color:var(--text-muted);">Darker cells indicate more youth at that age selected the same talent or sport preference</div>
+                </div>
+            </div>
+            <div class="report-card-body">
+                <div class="talent-map-toolbar-top">
+                    <p id="talent-map-description" class="talent-map-description">
+                        This map shows which talents and sports are most preferred by youth ages 15 to 30. Use it to spot strong interest clusters and low-interest areas for program planning.
+                    </p>
+                    <div class="talent-map-gradient-legend">
+                        <div class="talent-map-gradient-bar"></div>
+                        <div class="talent-map-gradient-labels">
+                            <span>Lower preference count</span>
+                            <span>Higher preference count</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="talent-map-metric-controls" role="tablist" aria-label="Talent/Sports selector">
+                    <button type="button" class="talent-map-metric-button active" data-metric="all" aria-pressed="true">All Preferences</button>
+                    <button type="button" class="talent-map-metric-button" data-metric="sports" aria-pressed="false">Sports</button>
+                    <button type="button" class="talent-map-metric-button" data-metric="talents" aria-pressed="false">Talents</button>
+                </div>
+                <div class="talent-map-chip-row">
+                    <span id="talent-map-scope-chip" class="talent-map-chip">Scope: Loading...</span>
+                    <span id="talent-map-metric-chip" class="talent-map-chip">Metric: All Preferences</span>
+                    <span id="talent-map-age-chip" class="talent-map-chip">Columns: Ages 15 to 30</span>
+                </div>
+                <div class="talent-map-summary-grid">
+                    <div class="talent-map-stat">
+                        <div class="talent-map-stat-label">Most Chosen</div>
+                        <div id="talent-map-top-preference" class="talent-map-stat-value">Loading...</div>
+                        <div id="talent-map-top-preference-note" class="talent-map-stat-note">Checking which preference is selected the most.</div>
+                    </div>
+                    <div class="talent-map-stat">
+                        <div class="talent-map-stat-label">Minimal Chosen</div>
+                        <div id="talent-map-least-preference" class="talent-map-stat-value">Loading...</div>
+                        <div id="talent-map-least-preference-note" class="talent-map-stat-note">Checking the least selected active preference.</div>
+                    </div>
+                    <div class="talent-map-stat">
+                        <div class="talent-map-stat-label">Peak Sports Overall</div>
+                        <div id="talent-map-peak-age" class="talent-map-stat-value">Loading...</div>
+                        <div id="talent-map-peak-age-note" class="talent-map-stat-note">Checking which sport has the highest overall picks, with male and female counts.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="report-card">
+            <div class="report-card-header">
+                <div class="report-card-icon">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3h18v18H3z"></path><path d="M8 3v18"></path><path d="M3 8h18"></path></svg>
+                </div>
+                <div>
+                    <div class="report-card-title">Talent/Sports Map Grid</div>
+                    <div id="talent-map-grid-note" style="font-size:.78rem;color:var(--text-muted);">Loading talent/sports preference data...</div>
+                </div>
+            </div>
+            <div class="report-card-body">
+                <div class="talent-map-shell">
+                    <div id="talent-map-shell" class="talent-map-scroll">
+                        <div class="talent-map-empty">Loading talent/sports map data...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="report-card">
+            <div class="report-card-header">
+                <div class="report-card-icon">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M4 12h10"></path><path d="M4 17h7"></path></svg>
+                </div>
+                <div>
+                    <div class="report-card-title">Other Entries</div>
+                    <div id="custom-entry-note" style="font-size:.78rem;color:var(--text-muted);">Top custom entries typed into the Other fields.</div>
+                </div>
+            </div>
+            <div class="report-card-body">
+                <div id="custom-entry-list" class="custom-entry-list">
+                    <span class="custom-entry-chip">Loading custom entries...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const TALENT_MAP_METRICS = {
+        all: {
+            label: 'All Preferences',
+            noun: 'all talent and sports preferences'
+        },
+        sports: {
+            label: 'Sports',
+            noun: 'sports preferences'
+        },
+        talents: {
+            label: 'Talents',
+            noun: 'talent preferences'
+        }
+    };
+
+    const talentMapState = {
+        payload: null,
+        activeMetric: 'all',
+        currentUser: null
+    };
+
+    function getMetricMeta(metricKey) {
+        return TALENT_MAP_METRICS[metricKey] || TALENT_MAP_METRICS.all;
+    }
+
+    function hexToRgb(hex) {
+        const normalized = String(hex || '').replace('#', '');
+        if (normalized.length !== 6) return [31, 79, 163];
+        return [
+            parseInt(normalized.slice(0, 2), 16),
+            parseInt(normalized.slice(2, 4), 16),
+            parseInt(normalized.slice(4, 6), 16)
+        ];
+    }
+
+    function blendColor(startHex, endHex, ratio) {
+        const start = hexToRgb(startHex);
+        const end = hexToRgb(endHex);
+        const mix = start.map((value, index) => Math.round(value + ((end[index] - value) * ratio)));
+        return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
+    }
+
+    function cellStyle(value, maxValue) {
+        if (!value || maxValue <= 0) {
+            return {
+                background: '#f8fbff',
+                color: '#8ea0bf'
+            };
+        }
+
+        const ratio = value / maxValue;
+        return {
+            background: blendColor('#eef5ff', '#1f4fa3', Math.min(1, ratio)),
+            color: ratio > 0.58 ? '#ffffff' : '#0f2558'
+        };
+    }
+
+    function syncMetricButtons() {
+        document.querySelectorAll('.talent-map-metric-button').forEach(button => {
+            const isActive = button.dataset.metric === talentMapState.activeMetric;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+        });
+    }
+
+    function updateSummary(metricData) {
+        const top = metricData?.top_preference;
+        const least = metricData?.least_preference;
+        const topSportOverall = talentMapState.payload?.top_sport_overall || null;
+
+        document.getElementById('talent-map-top-preference').textContent = top ? top.label : 'No data yet';
+        document.getElementById('talent-map-top-preference-note').textContent = top
+            ? `Male: ${top.male || 0} | Female: ${top.female || 0} | Total: ${top.total}`
+            : 'No saved preferences yet for the current scope.';
+
+        document.getElementById('talent-map-least-preference').textContent = least ? least.label : 'No data yet';
+        document.getElementById('talent-map-least-preference-note').textContent = least
+            ? `Male: ${least.male || 0} | Female: ${least.female || 0} | Total: ${least.total}`
+            : 'No saved preferences yet for the current scope.';
+
+        document.getElementById('talent-map-peak-age').textContent = topSportOverall ? topSportOverall.label : 'No data yet';
+        document.getElementById('talent-map-peak-age-note').textContent = topSportOverall
+            ? `Male: ${topSportOverall.male} | Female: ${topSportOverall.female} | Total: ${topSportOverall.total}`
+            : 'No sports preference data saved yet for the current scope.';
+    }
+
+    function renderCustomEntries(metricData) {
+        const container = document.getElementById('custom-entry-list');
+        const customEntries = Array.isArray(metricData?.custom_entries) ? metricData.custom_entries : [];
+        if (!container) return;
+
+        if (!customEntries.length) {
+            container.innerHTML = '<span class="custom-entry-chip">No custom Other entries recorded yet.</span>';
+            return;
+        }
+
+        container.innerHTML = customEntries.map(entry =>
+            `<span class="custom-entry-chip">${entry.label} (${entry.count})</span>`
+        ).join('');
+    }
+
+    function renderTalentSportsMap(metricData) {
+        const shell = document.getElementById('talent-map-shell');
+        const note = document.getElementById('talent-map-grid-note');
+        if (!shell) return;
+
+        const ages = metricData?.age_columns || [];
+        const rows = Array.isArray(metricData?.rows) ? metricData.rows : [];
+        const maxCellValue = metricData?.max_cell_value || 0;
+
+        if (!rows.length) {
+            shell.innerHTML = '<div class="talent-map-empty">No talent/sports preference data available yet.</div>';
+            if (note) note.textContent = 'No saved preference data found.';
+            updateSummary({ rows: [] });
+            renderCustomEntries(metricData);
+            return;
+        }
+
+        const bodyRows = rows.map(row => {
+            const cells = ages.map(age => {
+                const value = row.ages?.[age] || 0;
+                const style = cellStyle(value, maxCellValue);
+                return `<td class="talent-map-cell ${value ? '' : 'zero'}" style="background:${style.background};color:${style.color};">${value || '0'}</td>`;
+            }).join('');
+
+            return `
+                <tr>
+                    <th class="talent-map-rowhead">
+                        <div class="talent-map-rowname">${row.label}</div>
+                        <div class="talent-map-rowsub">${row.total} total selection${row.total === 1 ? '' : 's'}</div>
+                    </th>
+                    ${cells}
+                    <td class="talent-map-total-cell">${row.total}</td>
+                </tr>
+            `;
+        }).join('');
+
+        shell.innerHTML = `
+            <table class="talent-map-table">
+                <thead>
+                    <tr>
+                        <th class="talent-map-rowhead">Preference</th>
+                        ${ages.map(age => `<th>${age}</th>`).join('')}
+                        <th class="talent-map-total-head">Total</th>
+                    </tr>
+                </thead>
+                <tbody>${bodyRows}</tbody>
+            </table>
+        `;
+
+        if (note) note.textContent = `Showing ${rows.length} preference rows across ages ${ages[0]} to ${ages[ages.length - 1]}.`;
+        updateSummary(metricData);
+        renderCustomEntries(metricData);
+    }
+
+    function renderActiveMetric() {
+        if (!talentMapState.payload) return;
+
+        const metricKey = talentMapState.activeMetric;
+        const metricMeta = getMetricMeta(metricKey);
+        const metricData = talentMapState.payload.metrics?.[metricKey] || null;
+        const ages = metricData?.age_columns || [];
+
+        syncMetricButtons();
+
+        document.getElementById('talent-map-metric-chip').textContent = `Metric: ${metricMeta.label}`;
+        document.getElementById('talent-map-age-chip').textContent =
+            ages.length ? `Columns: Ages ${ages[0]} to ${ages[ages.length - 1]}` : 'Columns: Ages 15 to 30';
+        document.getElementById('talent-map-description').textContent =
+            `This map shows which ${metricMeta.noun} are most preferred by youth ages 15 to 30. Use it to find majority choices, low-interest preferences, and the ages where demand is strongest.`;
+
+        renderTalentSportsMap(metricData);
+    }
+
+    async function initTalentSportsMap() {
+        const shell = document.getElementById('talent-map-shell');
+        if (!shell) return;
+
+        document.querySelectorAll('.talent-map-metric-button').forEach(button => {
+            button.addEventListener('click', () => {
+                talentMapState.activeMetric = button.dataset.metric || 'all';
+                renderActiveMetric();
+            });
+        });
+
+        try {
+            const response = await fetch('/api/talent-sports-map/');
+            if (!response.ok) throw new Error('Failed to load talent/sports map data');
+            const data = await response.json();
+            talentMapState.payload = data;
+            talentMapState.activeMetric = data.default_metric || data.metric_order?.[0] || 'all';
+            document.getElementById('talent-map-scope-chip').textContent = `Scope: ${data.scope_label || 'Current Scope'}`;
+            renderActiveMetric();
+        } catch (error) {
+            console.warn('Could not load talent/sports map data:', error);
+            shell.innerHTML = '<div class="talent-map-empty">Could not load talent/sports map data right now.</div>';
+            const note = document.getElementById('talent-map-grid-note');
+            if (note) note.textContent = 'Unable to load talent/sports map data.';
+        }
+    }
+
+    function toggleSidebar() {
+        const menu = document.getElementById('side-menu');
+        const overlay = document.getElementById('side-overlay');
+        menu?.classList.toggle('open');
+        overlay?.classList.toggle('show');
+    }
+
+    function closeSidebar() {
+        document.getElementById('side-menu')?.classList.remove('open');
+        document.getElementById('side-overlay')?.classList.remove('show');
+    }
+
+    async function initializeProtectedNav() {
+        try {
+            const response = await fetch('/api/user/');
+            const data = response.ok ? await response.json() : null;
+            if (!data || !data.is_authenticated) {
+                window.location.href = '/login/';
+                return false;
+            }
+
+            const userDisplay = document.getElementById('user-display');
+            const usernameSpan = document.getElementById('username-span');
+            const accountLabel = document.getElementById('account-label');
+            const logoutBtn = document.getElementById('logout-btn');
+
+            if (userDisplay) userDisplay.style.display = 'block';
+            if (usernameSpan) {
+                usernameSpan.innerText = data.barangay_name && !data.is_admin
+                    ? `${data.username} (${data.barangay_name})`
+                    : data.username;
+            }
+            if (accountLabel) accountLabel.innerText = data.is_admin ? 'Admin' : 'Account';
+            if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+            document.querySelectorAll('.system-admin-only').forEach(el => {
+                el.style.display = data.is_admin ? '' : 'none';
+            });
+            talentMapState.currentUser = data;
+            return true;
+        } catch (error) {
+            console.warn('Could not verify current user:', error);
+            window.location.href = '/login/';
+            return false;
+        }
+    }
+
+    function logout() {
+        fetch('/api/logout/').then(() => window.location.href = '/login/');
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeSidebar();
+    });
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        const ready = await initializeProtectedNav();
+        if (!ready) return;
+        initTalentSportsMap();
+    });
+</script>
+</body>
+</html>

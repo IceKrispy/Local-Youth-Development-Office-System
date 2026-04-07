@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 
+
 class Barangay(models.Model):
     name = models.CharField(max_length=100)
     
@@ -110,9 +111,14 @@ class Youth(models.Model):
     
     # --- WORK & CIVIC ---
     work_status = models.CharField(max_length=50, blank=True)
+    sports_preferences = models.TextField(blank=True, default='[]')
+    talent_preferences = models.TextField(blank=True, default='[]')
+    sports_preference_other = models.CharField(max_length=200, blank=True)
+    talent_preference_other = models.CharField(max_length=200, blank=True)
     
     registered_voter_sk = models.BooleanField(default=False, verbose_name="Registered SK Voter")
     registered_voter_national = models.BooleanField(default=False, verbose_name="Registered National Voter")
+    is_non_voter = models.BooleanField(default=False, verbose_name="Non-Voter")
     voted_last_sk = models.BooleanField(default=False, verbose_name="Voted Last SK Election")
     
     attended_kk_assembly = models.BooleanField(default=False)

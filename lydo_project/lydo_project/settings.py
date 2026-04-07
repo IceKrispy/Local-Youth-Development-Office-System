@@ -50,7 +50,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',  # Add this line
-    'monitoring',
+    'monitoring.apps.MonitoringConfig',
 ]
 
 MIDDLEWARE = [
@@ -178,6 +178,9 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
+
+# Remove aged-out youth records in the background while the app is running.
+AGE_OUT_CLEANUP_INTERVAL_SECONDS = 3600
 
 
 # Static files (CSS, JavaScript, Images)

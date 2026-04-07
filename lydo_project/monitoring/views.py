@@ -7,6 +7,7 @@ import textwrap
 import unicodedata
 import zipfile
 import zlib
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 from django.shortcuts import render, redirect, get_object_or_404
@@ -19,6 +20,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.db.models import Count
 from django.utils import timezone
+from .age_rules import age_on_date, is_birthdate_aged_out as _shared_is_birthdate_aged_out, purge_aged_out_youths as _shared_purge_aged_out_youths
 from .models import Youth, Barangay, UserBarangayAssignment, UserAccessLog
 
 # Optional profanity filter (graceful fallback if package not installed)
@@ -102,11 +104,10 @@ def login_page(request):
 
 
 def register_page(request):
-    """Registration page; redirect to dashboard if already authenticated."""
+    """Public registration is disabled; account creation now happens in the admin area."""
     if request.user.is_authenticated:
         return redirect('index')
-    barangays = _ordered_barangays()
-    return render(request, 'register.html', {'barangays': barangays})
+    return redirect('login_page')
 
 
 def reports_page(request, bid=None):
@@ -130,6 +131,38 @@ def account_page(request):
     if not _is_system_admin(request.user):
         return redirect('index')
     return render(request, 'account.html')
+
+
+def talent_sports_map_page(request):
+    """Talent and sports preference heatmap page."""
+    if not request.user.is_authenticated:
+        return redirect('login_page')
+    return render(request, 'talentsport.html')
+
+
+SPORT_PREFERENCE_OPTIONS = [
+    'Soccer',
+    'Basketball',
+    'Volleyball',
+    'Baseball / Softball',
+    'Swimming',
+    'Gymnastics',
+    'Martial Arts (Karate, Taekwondo, BJJ)',
+    'Tennis / Pickleball',
+    'Track and Field',
+]
+
+TALENT_PREFERENCE_OPTIONS = [
+    'Musical Instruments (Piano, Guitar, Violin, etc.)',
+    'Vocals / Choir',
+    'Dance',
+    'Acting / Drama',
+    'Drawing & Painting',
+    'Pottery & Sculpting',
+]
+
+OTHER_SPORTS_LABEL = 'Other Sports'
+OTHER_TALENTS_LABEL = 'Other Talents'
 
 
 def _choice_labels(field_name):
@@ -156,7 +189,180 @@ def _build_blank_form_context(barangay_name):
         'osy_program_options': _choice_labels('osy_program_type'),
         'specific_needs_options': _choice_labels('specific_needs_condition'),
         'kk_no_reason_options': _choice_labels('kk_assembly_no_reason'),
+        'sports_preference_options': SPORT_PREFERENCE_OPTIONS,
+        'talent_preference_options': TALENT_PREFERENCE_OPTIONS,
     }
+
+
+def _normalize_preference_option(value):
+    normalized = unicodedata.normalize('NFKD', str(value or ''))
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+    return ' '.join(normalized.casefold().split())
+
+
+def _clean_preference_list(values, allowed_options):
+    if not isinstance(values, list):
+        return []
+    normalized_lookup = {
+        _normalize_preference_option(option): option
+        for option in allowed_options
+    }
+    cleaned = []
+    seen = set()
+    for value in values:
+        option = normalized_lookup.get(_normalize_preference_option(value))
+        if not option or option in seen:
+            continue
+        seen.add(option)
+        cleaned.append(option)
+    return cleaned
+
+
+def _serialize_preference_list(values, allowed_options):
+    return json.dumps(_clean_preference_list(values, allowed_options))
+
+
+def _parse_preference_list(raw_value, allowed_options):
+    if isinstance(raw_value, list):
+        data = raw_value
+    else:
+        try:
+            data = json.loads(raw_value or '[]')
+        except (TypeError, ValueError):
+            data = []
+    return _clean_preference_list(data, allowed_options)
+
+
+def _format_custom_preference_entries(counter):
+    return [
+        {'label': label, 'count': count}
+        for label, count in counter.most_common(5)
+    ]
+
+
+def _build_top_sport_overall_summary(youths):
+    sport_totals = {
+        label: {'male': 0, 'female': 0, 'total': 0}
+        for label in [*SPORT_PREFERENCE_OPTIONS, OTHER_SPORTS_LABEL]
+    }
+
+    for youth in youths:
+        sports = _parse_preference_list(youth.sports_preferences, SPORT_PREFERENCE_OPTIONS)
+        sports_other = (youth.sports_preference_other or '').strip()
+        sex = (youth.sex or '').strip().lower()
+        sex_key = 'male' if sex == 'male' else 'female' if sex == 'female' else None
+
+        for option in sports:
+            if option not in sport_totals:
+                continue
+            sport_totals[option]['total'] += 1
+            if sex_key:
+                sport_totals[option][sex_key] += 1
+
+        if sports_other:
+            sport_totals[OTHER_SPORTS_LABEL]['total'] += 1
+            if sex_key:
+                sport_totals[OTHER_SPORTS_LABEL][sex_key] += 1
+
+    ranked = [
+        {'label': label, **counts}
+        for label, counts in sport_totals.items()
+        if counts['total'] > 0
+    ]
+    return max(ranked, key=lambda item: item['total'], default=None)
+
+
+def _build_talent_sports_metric(youths, option_labels, category_key):
+    age_columns = [str(age) for age in range(15, 31)]
+    counts = {
+        label: {age: 0 for age in age_columns}
+        for label in option_labels
+    }
+    sex_totals = {
+        label: {'male': 0, 'female': 0}
+        for label in option_labels
+    }
+    custom_counter = Counter()
+
+    for youth in youths:
+        birthdate = youth.birthdate
+        if not birthdate:
+            continue
+        age = age_on_date(birthdate)
+        age_key = str(age) if age is not None else ''
+        if age_key not in age_columns:
+            continue
+        sex = (youth.sex or '').strip().lower()
+        sex_key = 'male' if sex == 'male' else 'female' if sex == 'female' else None
+
+        sports = _parse_preference_list(youth.sports_preferences, SPORT_PREFERENCE_OPTIONS)
+        talents = _parse_preference_list(youth.talent_preferences, TALENT_PREFERENCE_OPTIONS)
+        sports_other = (youth.sports_preference_other or '').strip()
+        talents_other = (youth.talent_preference_other or '').strip()
+
+        if category_key in ('all', 'sports'):
+            for option in sports:
+                if option in counts:
+                    counts[option][age_key] += 1
+                    if sex_key:
+                        sex_totals[option][sex_key] += 1
+            if sports_other and OTHER_SPORTS_LABEL in counts:
+                counts[OTHER_SPORTS_LABEL][age_key] += 1
+                if sex_key:
+                    sex_totals[OTHER_SPORTS_LABEL][sex_key] += 1
+                custom_counter[sports_other] += 1
+
+        if category_key in ('all', 'talents'):
+            for option in talents:
+                if option in counts:
+                    counts[option][age_key] += 1
+                    if sex_key:
+                        sex_totals[option][sex_key] += 1
+            if talents_other and OTHER_TALENTS_LABEL in counts:
+                counts[OTHER_TALENTS_LABEL][age_key] += 1
+                if sex_key:
+                    sex_totals[OTHER_TALENTS_LABEL][sex_key] += 1
+                custom_counter[talents_other] += 1
+
+    rows = []
+    max_cell_value = 0
+    age_totals = {age: 0 for age in age_columns}
+
+    for label in option_labels:
+        age_counts = counts[label]
+        total = sum(age_counts.values())
+        max_cell_value = max(max_cell_value, max(age_counts.values()) if age_counts else 0)
+        for age, value in age_counts.items():
+            age_totals[age] += value
+        rows.append({
+            'label': label,
+            'ages': age_counts,
+            'total': total,
+            'male': sex_totals[label]['male'],
+            'female': sex_totals[label]['female'],
+        })
+
+    populated_rows = [row for row in rows if row['total'] > 0]
+    strongest = max(populated_rows, key=lambda row: row['total'], default=None)
+    weakest = min(populated_rows, key=lambda row: row['total'], default=None)
+    peak_age = max(age_totals.items(), key=lambda item: item[1], default=('15', 0))
+
+    return {
+        'rows': rows,
+        'age_columns': age_columns,
+        'max_cell_value': max_cell_value,
+        'top_preference': strongest,
+        'least_preference': weakest,
+        'peak_age': {'age': peak_age[0], 'count': peak_age[1]},
+        'custom_entries': _format_custom_preference_entries(custom_counter),
+    }
+
+
+def _talent_sports_scope_label(user):
+    if _is_system_admin(user):
+        return 'All Barangays'
+    assigned = _assigned_barangay(user)
+    return assigned.name if assigned else 'Assigned Barangay'
 
 
 def _pdf_safe_text(value):
@@ -167,7 +373,9 @@ def _pdf_safe_text(value):
 
 
 def _wrap_pdf_text(text, max_width, font_size):
-    text = _pdf_safe_text(text)
+    text = unicodedata.normalize('NFKD', str(text or ''))
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.replace('\r', '').replace('\n', ' ')
     if not text:
         return []
     approx_chars = max(12, int(max_width / max(font_size * 0.52, 1)))
@@ -815,9 +1023,50 @@ def _build_blank_form_pdf(barangay_name, include_logo=False):
         col_gap=6,
     )
     right_bottom = _draw_line_field(pdf, right_x, right_bottom + 2, half_width, "Selected Group", line_y_offset=24)
-    signature_top = max(left_bottom, right_bottom) + 24 + 216
+    preference_top = max(left_bottom, right_bottom) + 16
+    preference_bottom_left = _draw_checkbox_list(
+        pdf,
+        left_x,
+        preference_top,
+        half_width,
+        "Talent / Sports Preference - Sports",
+        context['sports_preference_options'],
+        columns=2,
+        size=7.4,
+        row_gap=2,
+        col_gap=8,
+    )
+    preference_bottom_left = _draw_line_field(
+        pdf,
+        left_x,
+        preference_bottom_left + 2,
+        half_width,
+        "Other Sports Preference",
+        line_y_offset=24,
+    )
+    preference_bottom_right = _draw_checkbox_list(
+        pdf,
+        right_x,
+        preference_top,
+        half_width,
+        "Talent / Sports Preference - Talents",
+        context['talent_preference_options'],
+        columns=2,
+        size=6.9,
+        row_gap=2,
+        col_gap=8,
+    )
+    preference_bottom_right = _draw_line_field(
+        pdf,
+        right_x,
+        preference_bottom_right + 2,
+        half_width,
+        "Other Talent Preference",
+        line_y_offset=24,
+    )
+    signature_top = max(preference_bottom_left, preference_bottom_right) + 24 + 56
     signature_top = min(signature_top, pdf.page_height - 88)
-    signature_top = max(signature_top, max(left_bottom, right_bottom) + 24)
+    signature_top = max(signature_top, max(preference_bottom_left, preference_bottom_right) + 24)
     pdf.line(left_x, pdf.page_height - signature_top, left_x + half_width - 10, pdf.page_height - signature_top, width=0.8, color=(0.35, 0.42, 0.55))
     pdf.line(right_x, pdf.page_height - signature_top, right_x + half_width - 10, pdf.page_height - signature_top, width=0.8, color=(0.35, 0.42, 0.55))
     pdf.text(left_x + 50, pdf.page_height - signature_top - 16, "Signature of Youth Respondent", size=9, color=(0.33, 0.40, 0.50))
@@ -869,7 +1118,10 @@ def download_blank_form_pack(request):
 # Registration and login handlers
 
 @csrf_exempt
+@login_required(login_url='/login/')
 def register_view(request):
+    if not _is_system_admin(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
     if request.method != 'POST':
         return JsonResponse({'error': 'POST method required'}, status=405)
 
@@ -880,11 +1132,10 @@ def register_view(request):
 
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    email    = data.get('email', '').strip().lower()
     barangay_id = data.get('barangay_id')
 
-    if not username or not password or not email or not barangay_id:
-        return JsonResponse({'error': 'Username, email, password, and assigned barangay are required'}, status=400)
+    if not username or not password or not barangay_id:
+        return JsonResponse({'error': 'Username, password, and assigned barangay are required'}, status=400)
 
     if User.objects.filter(username=username).exists():
         return JsonResponse({'error': 'Username already exists'}, status=400)
@@ -899,13 +1150,14 @@ def register_view(request):
         barangay = Barangay.objects.get(id=barangay_id)
     except Barangay.DoesNotExist:
         return JsonResponse({'error': 'Selected barangay does not exist'}, status=400)
-    user = User.objects.create_user(username=username, password=password, email=email)
+    user = User.objects.create_user(username=username, password=password, email='')
     UserBarangayAssignment.objects.create(user=user, barangay=barangay)
-    login(request, user)
-    _log_user_access(request, user)
-    return JsonResponse({'message': 'Registered and logged in successfully',
-                         'username': user.username,
-                         'barangay_name': barangay.name})
+    return JsonResponse({
+        'message': 'Account created successfully',
+        'user_id': user.id,
+        'username': user.username,
+        'barangay_name': barangay.name,
+    })
 
 
 @csrf_exempt
@@ -1054,6 +1306,71 @@ def admin_enable_account_api(request):
     return JsonResponse({'message': 'Account enabled successfully'})
 
 
+@csrf_exempt
+@login_required(login_url='/login/')
+def admin_update_account_api(request):
+    if not _is_system_admin(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST method required'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    user_id = data.get('user_id')
+    username = data.get('username', '').strip()
+    barangay_id = data.get('barangay_id')
+    password = data.get('password', '')
+
+    if not user_id:
+        return JsonResponse({'error': 'User ID is required'}, status=400)
+    if not username or not barangay_id:
+        return JsonResponse({'error': 'Username and assigned barangay are required'}, status=400)
+
+    try:
+        target_user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return JsonResponse({'error': 'User not found'}, status=404)
+
+    if _is_system_admin(target_user):
+        return JsonResponse({'error': 'Admin accounts cannot be edited here'}, status=400)
+
+    if User.objects.exclude(id=target_user.id).filter(username=username).exists():
+        return JsonResponse({'error': 'Username already exists'}, status=400)
+
+    _seed_barangays()
+    try:
+        barangay = Barangay.objects.get(id=barangay_id)
+    except Barangay.DoesNotExist:
+        return JsonResponse({'error': 'Selected barangay does not exist'}, status=400)
+
+    target_user.username = username
+    update_fields = ['username']
+
+    if password:
+        try:
+            validate_password(password, user=target_user)
+        except ValidationError as exc:
+            return JsonResponse({'error': ' '.join(exc.messages)}, status=400)
+        target_user.set_password(password)
+        update_fields.append('password')
+
+    target_user.save(update_fields=update_fields)
+    UserBarangayAssignment.objects.update_or_create(
+        user=target_user,
+        defaults={'barangay': barangay},
+    )
+
+    return JsonResponse({
+        'message': 'Account updated successfully',
+        'user_id': target_user.id,
+        'username': target_user.username,
+        'barangay_name': barangay.name,
+    })
+
+
 # Barangay seed data and summary endpoints
 # BARANGAY API ENDPOINTS
 # Default barangay list used for initialization
@@ -1069,7 +1386,61 @@ _DEFAULT_BARANGAYS = [
 def _normalize_barangay_name(name):
     value = unicodedata.normalize('NFKD', str(name or ''))
     value = ''.join(ch for ch in value if not unicodedata.combining(ch))
-    return ' '.join(value.lower().split())
+    value = ' '.join(value.lower().split())
+    aliases = {
+        'dicklum': 'diclum',
+    }
+    return aliases.get(value, value)
+
+
+_NEARBY_BARANGAY_GROUPS = [
+    ("Alae", "Mantibugao", "Mambatangan"),
+    ("Damilag", "Agusan Canyon", "San Miguel"),
+    ("Tankulan", "Diclum", "Dicklum", "Santo NiÃ±o", "Lunocan"),
+    ("Maluko", "Dalirig"),
+    ("Dahilayan", "Mampayag", "Guilang-guilang", "Kalugmanan"),
+    ("Lingion", "Sankanan", "Santiago", "Lindaban", "Ticala", "Minsuro"),
+]
+
+
+def _is_birthdate_aged_out(birthdate):
+    return _shared_is_birthdate_aged_out(birthdate)
+
+
+def _purge_aged_out_youths():
+    return _shared_purge_aged_out_youths()
+
+
+def _build_nearby_barangay_lookup():
+    lookup = {}
+    for group in _NEARBY_BARANGAY_GROUPS:
+        normalized_group = {_normalize_barangay_name(name) for name in group if name}
+        for name in normalized_group:
+            lookup.setdefault(name, set()).update(normalized_group - {name})
+    return lookup
+
+
+_NEARBY_BARANGAY_LOOKUP = _build_nearby_barangay_lookup()
+
+
+def _allowed_barangay_transfer_names(current_barangay):
+    current_name = _normalize_barangay_name(current_barangay.name if current_barangay else '')
+    allowed_names = _NEARBY_BARANGAY_LOOKUP.get(current_name, set())
+    barangays_by_name = {
+        _normalize_barangay_name(barangay.name): barangay.name
+        for barangay in Barangay.objects.all()
+    }
+    return sorted(barangays_by_name[name] for name in allowed_names if name in barangays_by_name)
+
+
+def _is_allowed_barangay_transfer(current_barangay, new_barangay):
+    if not current_barangay or not new_barangay:
+        return False
+    if current_barangay.id == new_barangay.id:
+        return True
+    current_name = _normalize_barangay_name(current_barangay.name)
+    new_name = _normalize_barangay_name(new_barangay.name)
+    return new_name in _NEARBY_BARANGAY_LOOKUP.get(current_name, set())
 
 
 def _seed_barangays():
@@ -1109,6 +1480,7 @@ def barangay_summary(request, bid):
     """Return aggregated demographic summary for a single barangay."""
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+    _purge_aged_out_youths()
     barangay = get_object_or_404(Barangay, id=bid)
     access_error = _assert_barangay_access(request, barangay)
     if access_error:
@@ -1181,6 +1553,7 @@ def demographics_api(request):
     """Per-barangay demographic breakdown used by the interactive reports table."""
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+    _purge_aged_out_youths()
     _seed_barangays()
 
     metric_keys = ('isy', 'osy', 'yd', 'iy', 'ip', 'wk', 'uy')
@@ -1292,6 +1665,7 @@ def heatmap_api(request):
     """Barangay by age heatmap data for key youth categories."""
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+    _purge_aged_out_youths()
     age_columns = [str(age) for age in range(15, 31)]
     barangays = _ordered_barangays_for_user(request.user)
     allowed_ids = [barangay.id for barangay in barangays]
@@ -1319,6 +1693,52 @@ def heatmap_api(request):
     })
 
 
+def talent_sports_map_api(request):
+    """Preference heatmap data for youth talents and sports by age."""
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+    _purge_aged_out_youths()
+
+    youths = Youth.objects.select_related('barangay').filter(birthdate__isnull=False)
+    if not _is_system_admin(request.user):
+        assigned = _assigned_barangay(request.user)
+        if not assigned:
+            return JsonResponse({
+                'scope_label': _talent_sports_scope_label(request.user),
+                'default_metric': 'all',
+                'metric_order': ['all', 'sports', 'talents'],
+                'metrics': {},
+            })
+        youths = youths.filter(barangay=assigned)
+
+    youth_list = list(youths)
+    metrics = {
+        'all': _build_talent_sports_metric(
+            youth_list,
+            [*SPORT_PREFERENCE_OPTIONS, OTHER_SPORTS_LABEL, *TALENT_PREFERENCE_OPTIONS, OTHER_TALENTS_LABEL],
+            'all',
+        ),
+        'sports': _build_talent_sports_metric(
+            youth_list,
+            [*SPORT_PREFERENCE_OPTIONS, OTHER_SPORTS_LABEL],
+            'sports',
+        ),
+        'talents': _build_talent_sports_metric(
+            youth_list,
+            [*TALENT_PREFERENCE_OPTIONS, OTHER_TALENTS_LABEL],
+            'talents',
+        ),
+    }
+
+    return JsonResponse({
+        'scope_label': _talent_sports_scope_label(request.user),
+        'default_metric': 'all',
+        'metric_order': ['all', 'sports', 'talents'],
+        'metrics': metrics,
+        'top_sport_overall': _build_top_sport_overall_summary(youth_list),
+    })
+
+
 def unemployed_heatmap_api(request):
     """Backward-compatible alias for the heatmap API."""
     return heatmap_api(request)
@@ -1339,6 +1759,7 @@ def youth_api(request):
 
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+    _purge_aged_out_youths()
 
     # GET: list youth profiles
     if request.method == 'GET':
@@ -1387,8 +1808,13 @@ def youth_api(request):
                     'is_scholar':               y.is_scholar,
                     'scholarship_program':      y.scholarship_program,
                     'work_status':              y.work_status,
+                    'sports_preferences':       _parse_preference_list(y.sports_preferences, SPORT_PREFERENCE_OPTIONS),
+                    'talent_preferences':       _parse_preference_list(y.talent_preferences, TALENT_PREFERENCE_OPTIONS),
+                    'sports_preference_other':  y.sports_preference_other,
+                    'talent_preference_other':  y.talent_preference_other,
                     'registered_voter_sk':      y.registered_voter_sk,
                     'registered_voter_national':y.registered_voter_national,
+                    'is_non_voter':             y.is_non_voter,
                     'voted_last_sk':            y.voted_last_sk,
                     'attended_kk_assembly':     y.attended_kk_assembly,
                     'kk_assembly_times':        y.kk_assembly_times,
@@ -1434,9 +1860,48 @@ def youth_api(request):
                 except (ValueError, TypeError):
                     return default
 
+            birthdate_value = data.get('birthdate') or None
+            if birthdate_value:
+                try:
+                    parsed_birthdate = datetime.date.fromisoformat(birthdate_value)
+                except ValueError:
+                    return JsonResponse({'error': 'Birthdate must use YYYY-MM-DD format'}, status=400)
+                if _is_birthdate_aged_out(parsed_birthdate):
+                    detected_age = age_on_date(parsed_birthdate)
+                    return JsonResponse(
+                        {
+                            'error': f'This person is already {detected_age} years old. The system only allows records for ages 30 and below.',
+                            'age_blocked': True,
+                            'age': detected_age,
+                        },
+                        status=400,
+                    )
+
+            is_non_voter = get_bool('is_non_voter')
+            registered_voter_sk = get_bool('registered_voter_sk')
+            registered_voter_national = get_bool('registered_voter_national')
+            voted_last_sk = get_bool('voted_last_sk')
+            sports_preferences = _serialize_preference_list(
+                data.get('sports_preferences', []),
+                SPORT_PREFERENCE_OPTIONS,
+            )
+            talent_preferences = _serialize_preference_list(
+                data.get('talent_preferences', []),
+                TALENT_PREFERENCE_OPTIONS,
+            )
+            sports_preference_other = str(data.get('sports_preference_other') or '').strip()
+            talent_preference_other = str(data.get('talent_preference_other') or '').strip()
+
+            if is_non_voter:
+                registered_voter_sk = False
+                registered_voter_national = False
+                voted_last_sk = False
+            elif registered_voter_sk or registered_voter_national or voted_last_sk:
+                is_non_voter = False
+
             fields = {
                 'name':             name,
-                'birthdate':        data.get('birthdate') or None,
+                'birthdate':        birthdate_value,
                 'sex':              data.get('sex'),
                 'civil_status':     data.get('civil_status'),
                 'religion':         data.get('religion'),
@@ -1465,9 +1930,14 @@ def youth_api(request):
                 'is_scholar':       get_bool('is_scholar'),
                 'scholarship_program': data.get('scholarship_program'),
                 'work_status':      data.get('work_status'),
-                'registered_voter_sk':      get_bool('registered_voter_sk'),
-                'registered_voter_national': get_bool('registered_voter_national'),
-                'voted_last_sk':    get_bool('voted_last_sk'),
+                'sports_preferences': sports_preferences,
+                'talent_preferences': talent_preferences,
+                'sports_preference_other': sports_preference_other,
+                'talent_preference_other': talent_preference_other,
+                'registered_voter_sk':      registered_voter_sk,
+                'registered_voter_national': registered_voter_national,
+                'is_non_voter':     is_non_voter,
+                'voted_last_sk':    voted_last_sk,
                 'attended_kk_assembly': get_bool('attended_kk_assembly'),
                 'kk_assembly_times': get_int('kk_assembly_times'),
                 'kk_assembly_no_reason': data.get('kk_assembly_no_reason'),
@@ -1487,6 +1957,31 @@ def youth_api(request):
             existing_access_error = _assert_barangay_access(request, youth.barangay)
             if existing_access_error:
                 return existing_access_error
+            is_barangay_changed = youth.barangay_id != barangay.id
+            if is_barangay_changed:
+                allowed_barangays = _allowed_barangay_transfer_names(youth.barangay)
+                if not _is_allowed_barangay_transfer(youth.barangay, barangay):
+                    allowed_label = ', '.join(allowed_barangays) if allowed_barangays else 'No nearby barangays configured'
+                    return JsonResponse(
+                        {
+                            'error': f"Address transfer from {youth.barangay.name} to {barangay.name} is not allowed. Allowed nearby barangays: {allowed_label}.",
+                            'allowed_barangays': allowed_barangays,
+                            'current_barangay': youth.barangay.name,
+                            'target_barangay': barangay.name,
+                        },
+                        status=400,
+                    )
+                if not bool(data.get('confirm_barangay_transfer')):
+                    return JsonResponse(
+                        {
+                            'error': f"{youth.name} is currently registered in {youth.barangay.name}. Confirm the move to {barangay.name} to continue.",
+                            'requires_confirmation': True,
+                            'allowed_barangays': allowed_barangays,
+                            'current_barangay': youth.barangay.name,
+                            'target_barangay': barangay.name,
+                        },
+                        status=400,
+                    )
             for key, value in fields.items():
                 setattr(youth, key, value)
             youth.save()

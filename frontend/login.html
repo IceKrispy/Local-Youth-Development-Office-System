@@ -104,7 +104,7 @@
         </form>
 
         <div class="auth-switch">
-            Don't have an account? <a href="{% url 'register_page' %}">Create one here</a>
+            Account access is created by the LYDO administrator.
         </div>
 
         <div class="login-footer">
@@ -118,7 +118,7 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 
-<script src="{% static 'script.js' %}"></script>
+<script src="{% static 'script.js' %}?v=20260407-talent-sports-map"></script>
 <script>
 function togglePasswordField(inputId, iconId) {
     const input = document.getElementById(inputId);

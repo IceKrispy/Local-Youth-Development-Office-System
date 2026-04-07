@@ -475,6 +475,40 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="divider"></div>
+
+                <div class="grid">
+                    <div class="check-card">
+                        <div class="check-group">
+                            <label>Talent / Sports Preference - Sports</label>
+                            <div class="checks">
+                                {% for option in sports_preference_options %}
+                                <label class="check-item"><input type="checkbox" name="sport_preference_{{ forloop.counter }}"> {{ option }}</label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="field" style="margin-top: 10px;">
+                            <label>Other Sports Preference</label>
+                            <input type="text" name="sports_preference_other">
+                        </div>
+                    </div>
+
+                    <div class="check-card">
+                        <div class="check-group">
+                            <label>Talent / Sports Preference - Talents</label>
+                            <div class="checks">
+                                {% for option in talent_preference_options %}
+                                <label class="check-item"><input type="checkbox" name="talent_preference_{{ forloop.counter }}"> {{ option }}</label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="field" style="margin-top: 10px;">
+                            <label>Other Talent Preference</label>
+                            <input type="text" name="talent_preference_other">
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 

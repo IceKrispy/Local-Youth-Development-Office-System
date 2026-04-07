@@ -5,6 +5,39 @@ let allYouths = [];
 let currentBarangayId = null;
 let CURRENT_USER = null;
 let ADMIN_ACTIVITY_REFRESH = null;
+let ADMIN_ACCOUNT_BARANGAYS = [];
+let ADMIN_ACCOUNT_ROWS = [];
+let ADMIN_ACCOUNT_MODAL = null;
+
+const YOUTH_BARANGAY_MOVE_GROUPS = [
+	['Alae', 'Mantibugao', 'Mambatangan'],
+	['Damilag', 'Agusan Canyon', 'San Miguel'],
+	['Tankulan', 'Diclum', 'Dicklum', 'Santo Niño', 'Lunocan'],
+	['Maluko', 'Dalirig'],
+	['Dahilayan', 'Mampayag', 'Guilang-guilang', 'Kalugmanan'],
+	['Lingion', 'Sankanan', 'Santiago', 'Lindaban', 'Ticala', 'Minsuro']
+];
+
+const SPORT_PREFERENCE_OPTIONS = [
+	'Soccer',
+	'Basketball',
+	'Volleyball',
+	'Baseball / Softball',
+	'Swimming',
+	'Gymnastics',
+	'Martial Arts (Karate, Taekwondo, BJJ)',
+	'Tennis / Pickleball',
+	'Track and Field'
+];
+
+const TALENT_PREFERENCE_OPTIONS = [
+	'Musical Instruments (Piano, Guitar, Violin, etc.)',
+	'Vocals / Choir',
+	'Dance',
+	'Acting / Drama',
+	'Drawing & Painting',
+	'Pottery & Sculpting'
+];
 
 window.nextTab = window.nextTab || function(target) { console.warn('nextTab called before initialization', target); };
 window.prevTab = window.prevTab || function(target) { console.warn('prevTab called before initialization', target); };
@@ -14,6 +47,20 @@ const val = id => ($id(id) && $id(id).value) || '';
 const chk = id => !!($id(id) && $id(id).checked);
 const setVal = (id, v) => { const e = $id(id); if (e) e.value = v || ''; };
 const setChk = (id, v) => { const e = $id(id); if (e) e.checked = !!v; };
+
+function togglePasswordField(inputId, iconId) {
+	const input = $id(inputId);
+	const icon = $id(iconId);
+	if (!input || !icon) return;
+
+	if (input.type === 'password') {
+		input.type = 'text';
+		icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
+	} else {
+		input.type = 'password';
+		icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+	}
+}
 
 function hexToRgbArray(hex) {
 	if (!hex) return null;
@@ -40,6 +87,198 @@ function cssVarRgb(varName, fallback) {
 		const rgb = hexToRgbArray(raw.trim()) || fallback;
 		return rgb;
 	} catch (e) { return fallback; }
+}
+
+function normalizeBarangayName(value) {
+	const normalized = String(value || '')
+		.normalize('NFKD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toLowerCase()
+		.trim()
+		.replace(/\s+/g, ' ');
+	return normalized === 'dicklum' ? 'diclum' : normalized;
+}
+
+function parseBirthdateValue(value) {
+	if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+	const [year, month, day] = value.split('-').map(Number);
+	const parsed = new Date(year, month - 1, day);
+	if (
+		parsed.getFullYear() !== year ||
+		parsed.getMonth() !== month - 1 ||
+		parsed.getDate() !== day
+	) {
+		return null;
+	}
+	return parsed;
+}
+
+function formatDateForInput(date) {
+	if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+}
+
+function yearsAgoFromToday(years) {
+	const today = new Date();
+	const target = new Date(today.getFullYear() - years, today.getMonth(), today.getDate());
+	if (target.getMonth() !== today.getMonth()) {
+		target.setDate(0);
+	}
+	return target;
+}
+
+function getAgeFromBirthdateValue(value) {
+	const birthdate = parseBirthdateValue(value);
+	if (!birthdate) return null;
+	const today = new Date();
+	let age = today.getFullYear() - birthdate.getFullYear();
+	const hasHadBirthday =
+		today.getMonth() > birthdate.getMonth() ||
+		(today.getMonth() === birthdate.getMonth() && today.getDate() >= birthdate.getDate());
+	if (!hasHadBirthday) age -= 1;
+	return age;
+}
+
+function isBirthdateOverAgeLimit(value) {
+	const birthdate = parseBirthdateValue(value);
+	if (!birthdate) return false;
+	return birthdate <= yearsAgoFromToday(31);
+}
+
+function getOldestAllowedBirthdateValue() {
+	const oldestAllowed = yearsAgoFromToday(31);
+	oldestAllowed.setDate(oldestAllowed.getDate() + 1);
+	return formatDateForInput(oldestAllowed);
+}
+
+function setBirthdateFeedback(message, tone = 'muted') {
+	const feedback = $id('birthdate-age-feedback');
+	if (!feedback) return;
+	feedback.className = `form-text text-${tone}`;
+	feedback.textContent = message;
+}
+
+function updateBirthdateEligibilityState() {
+	const input = $id('birthdate');
+	if (!input) return true;
+
+	if (!input.value) {
+		input.setCustomValidity('');
+		setBirthdateFeedback('Only youth aged 30 and below can be saved in the system.', 'muted');
+		return true;
+	}
+
+	const age = getAgeFromBirthdateValue(input.value);
+	if (isBirthdateOverAgeLimit(input.value)) {
+		input.setCustomValidity(`Detected age: ${age ?? 31}. This person is already 31 or older and can no longer be saved as a youth record.`);
+		setBirthdateFeedback(
+			`Detected age: ${age ?? 31}. This person is already 31 or older, so the record cannot be saved.`,
+			'danger'
+		);
+		return false;
+	}
+
+	input.setCustomValidity('');
+	setBirthdateFeedback(
+		age == null
+			? 'Only youth aged 30 and below can be saved in the system.'
+			: `Detected age: ${age}. This record is still allowed because the youth is 30 or below.`,
+		age == null ? 'muted' : 'success'
+	);
+	return true;
+}
+
+function preferenceOptionId(prefix, option) {
+	return `${prefix}-${String(option || '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')}`;
+}
+
+function renderPreferenceCheckboxGroup(containerId, prefix, options) {
+	const container = $id(containerId);
+	if (!container) return;
+	container.innerHTML = options.map(option => `
+		<div class="col-md-6">
+			<div class="form-check m-0">
+				<input type="checkbox" class="form-check-input" id="${preferenceOptionId(prefix, option)}">
+				<label class="form-check-label" for="${preferenceOptionId(prefix, option)}">${option}</label>
+			</div>
+		</div>
+	`).join('');
+}
+
+function collectPreferenceSelections(prefix, options) {
+	return options.filter(option => {
+		const input = $id(preferenceOptionId(prefix, option));
+		return !!(input && input.checked);
+	});
+}
+
+function applyPreferenceSelections(prefix, options, selectedValues) {
+	const selectedSet = new Set((Array.isArray(selectedValues) ? selectedValues : []).map(value => String(value)));
+	options.forEach(option => {
+		const input = $id(preferenceOptionId(prefix, option));
+		if (input) input.checked = selectedSet.has(option);
+	});
+}
+
+function syncNonVoterCheckbox(changedId) {
+	const nonVoter = $id('is_non_voter');
+	const skVoter = $id('registered_voter_sk');
+	const nationalVoter = $id('registered_voter_national');
+	const votedLastSk = $id('voted_last_sk');
+	if (!nonVoter || !skVoter || !nationalVoter || !votedLastSk) return;
+
+	if (changedId === 'is_non_voter' && nonVoter.checked) {
+		skVoter.checked = false;
+		nationalVoter.checked = false;
+		votedLastSk.checked = false;
+		return;
+	}
+
+	if ((changedId === 'registered_voter_sk' || changedId === 'registered_voter_national' || changedId === 'voted_last_sk')
+		&& (skVoter.checked || nationalVoter.checked || votedLastSk.checked)) {
+		nonVoter.checked = false;
+	}
+}
+
+const YOUTH_BARANGAY_MOVE_LOOKUP = (() => {
+	const lookup = {};
+	YOUTH_BARANGAY_MOVE_GROUPS.forEach(group => {
+		const normalizedGroup = Array.from(new Set(group.map(normalizeBarangayName)));
+		normalizedGroup.forEach(name => {
+			lookup[name] = lookup[name] || new Set();
+			normalizedGroup.forEach(other => {
+				if (other !== name) lookup[name].add(other);
+			});
+		});
+	});
+	return lookup;
+})();
+
+function getBarangayNameById(id) {
+	const match = BARANGAYS.find(barangay => String(barangay.id) === String(id));
+	return match ? match.name : '';
+}
+
+function getAllowedBarangayMoves(currentBarangayName) {
+	const normalizedCurrent = normalizeBarangayName(currentBarangayName);
+	const allowedNames = Array.from(YOUTH_BARANGAY_MOVE_LOOKUP[normalizedCurrent] || []);
+	return BARANGAYS
+		.filter(barangay => allowedNames.includes(normalizeBarangayName(barangay.name)))
+		.map(barangay => barangay.name)
+		.sort((a, b) => a.localeCompare(b));
+}
+
+function isAllowedBarangayMove(currentBarangayName, newBarangayName) {
+	if (!currentBarangayName || !newBarangayName) return false;
+	if (normalizeBarangayName(currentBarangayName) === normalizeBarangayName(newBarangayName)) return true;
+	return getAllowedBarangayMoves(currentBarangayName)
+		.some(name => normalizeBarangayName(name) === normalizeBarangayName(newBarangayName));
 }
 
 function getSpecialCountEntries(data) {
@@ -126,6 +365,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const onAuthPage = onLoginPage || onRegisterPage;
 	const hasAdminActivitySection = !!document.getElementById('admin-account-section');
 
+	initAdminBarangayDropdown();
+	renderPreferenceCheckboxGroup('sports-preference-options', 'sport-pref', SPORT_PREFERENCE_OPTIONS);
+	renderPreferenceCheckboxGroup('talent-preference-options', 'talent-pref', TALENT_PREFERENCE_OPTIONS);
+
 	if (onAuthPage) {
 		return;
 	}
@@ -137,6 +380,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	}
 
 	if (CURRENT_USER && CURRENT_USER.is_admin && hasAdminActivitySection) {
+		loadAdminAccountBarangays().catch(err => console.warn('Could not load admin barangays:', err));
 		fetchAdminAccountActivity();
 		if (ADMIN_ACTIVITY_REFRESH) clearInterval(ADMIN_ACTIVITY_REFRESH);
 		ADMIN_ACTIVITY_REFRESH = setInterval(fetchAdminAccountActivity, 30000);
@@ -151,6 +395,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	}
 	updateTabState();
 	attachAutoToggles(); 
+	updateBirthdateEligibilityState();
 	document.querySelectorAll('.btn-next').forEach(btn => {
 		btn.addEventListener('click', (ev) => {
 			const tgt = btn.getAttribute('data-target');
@@ -176,6 +421,20 @@ function attachAutoToggles() {
 
 	const modal = document.getElementById('youthModal');
 	if (modal) modal.addEventListener('shown.bs.modal', () => setTimeout(updateAutoTogglesState, 10));
+
+	const birthdateInput = document.getElementById('birthdate');
+	if (birthdateInput) {
+		const oldestAllowedValue = getOldestAllowedBirthdateValue();
+		if (oldestAllowedValue) birthdateInput.min = oldestAllowedValue;
+		birthdateInput.addEventListener('change', updateBirthdateEligibilityState);
+		birthdateInput.addEventListener('blur', updateBirthdateEligibilityState);
+	}
+
+	['is_non_voter', 'registered_voter_sk', 'registered_voter_national', 'voted_last_sk'].forEach(id => {
+		const el = document.getElementById(id);
+		if (!el) return;
+		el.addEventListener('change', () => syncNonVoterCheckbox(id));
+	});
 }
 
 function updateAutoTogglesState() {
@@ -469,10 +728,10 @@ function downloadAllBlankYouthForms() {
 	window.location.href = '/api/forms/youth-profile-pack/';
 }
 
-function populateBarangayDropdown() {
+function populateBarangayDropdown(options = BARANGAYS) {
 	const select = $id('barangay_id');
 	if (!select) return;
-	select.innerHTML = BARANGAYS.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
+	select.innerHTML = options.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
 }
 
 function openBarangay(id, name) {
@@ -767,9 +1026,10 @@ function renderAdminAccountActivity(payload) {
 
 	section.style.display = 'block';
 	const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+	ADMIN_ACCOUNT_ROWS = rows;
 	const activeBarangays = Array.isArray(payload?.active_barangays) ? payload.active_barangays : [];
 	summary.textContent = rows.length
-		? `${payload.active_count || 0} active account(s) right now. Active barangays: ${activeBarangays.length ? activeBarangays.join(', ') : 'none'}.`
+		? `${rows.length} account(s) total. ${payload.active_count || 0} active right now. Active barangays: ${activeBarangays.length ? activeBarangays.join(', ') : 'none'}.`
 		: 'No assigned barangay accounts available.';
 
 	if (!rows.length) {
@@ -783,6 +1043,7 @@ function renderAdminAccountActivity(payload) {
 		const statusClass = row.is_logged_in ? 'green' : (row.is_account_active ? 'navy' : 'rose');
 		const statusLabel = row.is_logged_in ? 'Active Now' : (row.is_account_active ? 'Offline' : 'Disabled');
 		const safeUsername = String(row.username).replace(/'/g, "\\'");
+		const editButton = `<button class="btn-tbl view" onclick="openAdminAccountModal(${row.user_id})">Edit</button>`;
 		const actionButton = row.is_account_active
 			? `<button class="btn-tbl delete" onclick="disableBarangayAccount(${row.user_id}, '${safeUsername}')">Disable</button>`
 			: `<button class="btn-tbl view" onclick="enableBarangayAccount(${row.user_id}, '${safeUsername}')">Enable</button>`;
@@ -793,7 +1054,7 @@ function renderAdminAccountActivity(payload) {
 				<td><span class="badge-pill ${statusClass}">${statusLabel}</span></td>
 				<td>${formatDateTime(row.login_time)}</td>
 				<td>${formatDateTime(row.logout_time)}</td>
-				<td>${actionButton}</td>
+				<td>${editButton} ${actionButton}</td>
 			</tr>
 		`;
 	}).join('');
@@ -845,6 +1106,218 @@ function enableBarangayAccount(userId, username) {
 		alert(data.error || 'Failed to enable account.');
 	}).catch(err => {
 		alert('Failed to enable account: ' + (err.message || err));
+	});
+}
+
+function populateAdminAccountBarangays(selectedId = '') {
+	const hiddenInput = $id('admin-account-barangay');
+	const label = $id('admin-account-barangay-label');
+	const panel = $id('admin-account-barangay-panel');
+	if (!hiddenInput || !label || !panel) return;
+
+	const normalizedSelected = String(selectedId || '');
+	const selectedBarangay = ADMIN_ACCOUNT_BARANGAYS.find(barangay => String(barangay.id) === normalizedSelected);
+	hiddenInput.value = normalizedSelected;
+	label.textContent = selectedBarangay ? selectedBarangay.name : 'Select barangay';
+	panel.innerHTML = ADMIN_ACCOUNT_BARANGAYS.map(barangay => {
+		const isSelected = String(barangay.id) === normalizedSelected ? ' selected' : '';
+		return `<button type="button" class="register-select-option${isSelected}" data-value="${barangay.id}" data-label="${barangay.name}" role="option">${barangay.name}</button>`;
+	}).join('');
+}
+
+async function loadAdminAccountBarangays(force = false) {
+	if (ADMIN_ACCOUNT_BARANGAYS.length && !force) {
+		populateAdminAccountBarangays();
+		return ADMIN_ACCOUNT_BARANGAYS;
+	}
+
+	const response = await fetch('/api/barangays/');
+	if (!response.ok) throw new Error('Failed to load barangays');
+	const data = await response.json();
+	ADMIN_ACCOUNT_BARANGAYS = Array.isArray(data) ? data : [];
+	populateAdminAccountBarangays();
+	return ADMIN_ACCOUNT_BARANGAYS;
+}
+
+function showAdminAccountFormError(message = '') {
+	const errorBox = $id('admin-account-form-error');
+	if (!errorBox) return;
+	if (message) {
+		errorBox.textContent = message;
+		errorBox.style.display = 'block';
+	} else {
+		errorBox.textContent = '';
+		errorBox.style.display = 'none';
+	}
+}
+
+function setAdminAccountSubmitState(isLoading) {
+	const submitBtn = $id('admin-account-submit');
+	const submitText = $id('admin-account-submit-text');
+	if (submitBtn) submitBtn.disabled = !!isLoading;
+	if (submitText) submitText.textContent = isLoading ? 'Saving...' : (submitBtn?.dataset.defaultLabel || 'Save');
+}
+
+function getAdminAccountModal() {
+	const modalEl = $id('adminAccountModal');
+	if (!modalEl) return null;
+	if (!ADMIN_ACCOUNT_MODAL) {
+		ADMIN_ACCOUNT_MODAL = new bootstrap.Modal(modalEl);
+	}
+	return ADMIN_ACCOUNT_MODAL;
+}
+
+function resetAdminAccountForm() {
+	const form = $id('admin-account-form');
+	if (form) form.reset();
+	setVal('admin-account-user-id', '');
+	showAdminAccountFormError('');
+	populateAdminAccountBarangays();
+	const submitBtn = $id('admin-account-submit');
+	if (submitBtn) submitBtn.dataset.defaultLabel = 'Create Account';
+	const submitText = $id('admin-account-submit-text');
+	if (submitText) submitText.textContent = 'Create Account';
+	const title = $id('admin-account-modal-title');
+	if (title) title.textContent = 'Create Barangay Account';
+	const helper = $id('admin-account-password-help');
+	if (helper) helper.textContent = 'Set a password for the new account.';
+}
+
+function initAdminBarangayDropdown() {
+	const wrap = $id('admin-account-barangay-wrap');
+	const trigger = $id('admin-account-barangay-trigger');
+	const panel = $id('admin-account-barangay-panel');
+	const hiddenInput = $id('admin-account-barangay');
+	const label = $id('admin-account-barangay-label');
+	if (!wrap || !trigger || !panel || !hiddenInput || !label) return;
+
+	const setOpen = (isOpen) => {
+		wrap.classList.toggle('open', isOpen);
+		trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+	};
+
+	trigger.addEventListener('click', () => {
+		setOpen(!wrap.classList.contains('open'));
+	});
+
+	panel.addEventListener('click', (event) => {
+		const option = event.target.closest('.register-select-option');
+		if (!option) return;
+		hiddenInput.value = option.dataset.value || '';
+		label.textContent = option.dataset.label || 'Select barangay';
+		panel.querySelectorAll('.register-select-option').forEach(item => item.classList.remove('selected'));
+		option.classList.add('selected');
+		setOpen(false);
+	});
+
+	document.addEventListener('click', (event) => {
+		if (!wrap.contains(event.target)) {
+			setOpen(false);
+		}
+	});
+
+	document.addEventListener('keydown', (event) => {
+		if (event.key === 'Escape') {
+			setOpen(false);
+		}
+	});
+}
+
+async function openAdminAccountModal(userId = null) {
+	if (!CURRENT_USER || !CURRENT_USER.is_admin) return;
+
+	try {
+		await loadAdminAccountBarangays();
+	} catch (err) {
+		alert('Could not load barangays: ' + (err.message || err));
+		return;
+	}
+
+	resetAdminAccountForm();
+
+	const isEdit = userId !== null && userId !== undefined;
+	if (isEdit) {
+		const row = ADMIN_ACCOUNT_ROWS.find(item => String(item.user_id) === String(userId));
+		if (!row) {
+			alert('Account details could not be found. Please refresh and try again.');
+			return;
+		}
+
+		setVal('admin-account-user-id', row.user_id);
+		setVal('admin-account-username', row.username);
+		populateAdminAccountBarangays(row.barangay_id);
+
+		const title = $id('admin-account-modal-title');
+		if (title) title.textContent = 'Update Barangay Account';
+		const helper = $id('admin-account-password-help');
+		if (helper) helper.textContent = 'Leave the password fields blank if you do not want to change the current password.';
+		const submitBtn = $id('admin-account-submit');
+		if (submitBtn) submitBtn.dataset.defaultLabel = 'Update Account';
+		const submitText = $id('admin-account-submit-text');
+		if (submitText) submitText.textContent = 'Update Account';
+	}
+
+	const modal = getAdminAccountModal();
+	if (modal) modal.show();
+}
+
+function submitAdminAccountForm(e) {
+	e.preventDefault();
+	if (!CURRENT_USER || !CURRENT_USER.is_admin) return;
+
+	const userId = val('admin-account-user-id').trim();
+	const username = val('admin-account-username').trim();
+	const barangayId = val('admin-account-barangay');
+	const password = val('admin-account-password');
+	const confirmPassword = val('admin-account-confirm-password');
+	const isEdit = !!userId;
+
+	showAdminAccountFormError('');
+
+	if (!username || !barangayId) {
+		showAdminAccountFormError('Username and assigned barangay are required.');
+		return;
+	}
+
+	if (!isEdit && !password) {
+		showAdminAccountFormError('Password is required when creating an account.');
+		return;
+	}
+
+	if (password !== confirmPassword) {
+		showAdminAccountFormError('Passwords do not match.');
+		return;
+	}
+
+	const payload = {
+		username,
+		barangay_id: barangayId
+	};
+	if (password) payload.password = password;
+	if (isEdit) payload.user_id = userId;
+
+	const endpoint = isEdit ? '/api/admin/update-account/' : '/api/register/';
+	setAdminAccountSubmitState(true);
+
+	fetch(endpoint, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify(payload)
+	}).then(async res => {
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			throw new Error(data.error || 'Failed to save account.');
+		}
+		return data;
+	}).then(() => {
+		const modal = getAdminAccountModal();
+		if (modal) modal.hide();
+		resetAdminAccountForm();
+		fetchAdminAccountActivity();
+	}).catch(err => {
+		showAdminAccountFormError(err.message || 'Failed to save account.');
+	}).finally(() => {
+		setAdminAccountSubmitState(false);
 	});
 }
 
@@ -929,12 +1402,22 @@ function renderRows(data) {
 	if(isLoggedIn) document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'table-cell');
 }
 
+function setYouthBarangayEditable(isEditable) {
+	const select = $id('barangay_id');
+	if (!select) return;
+	select.style.pointerEvents = isEditable ? 'auto' : 'none';
+	select.style.background = isEditable ? '#ffffff' : '#f4f7ff';
+}
+
 function openModal() {
 	document.getElementById('youthForm').reset();
 	document.getElementById('youth-id').value = '';
+	populateBarangayDropdown(BARANGAYS);
 	if (currentBarangayId) document.getElementById('barangay_id').value = currentBarangayId;
+	setYouthBarangayEditable(false);
 	toggleOSY();
 	updateAutoTogglesState();
+	updateBirthdateEligibilityState();
 	document.querySelectorAll('.edit-save-btn').forEach(btn => btn.style.display = 'none');
 	if (typeof switchTab === 'function') {
 		switchTab('tab-personal',
@@ -947,6 +1430,15 @@ function editYouth(id) {
 	const y = getYouthById(id);
 	if (!y) return alert("Error: Data not found");
 	const d = y.full_data || {};
+	const currentBarangayName = y.barangay_name || getBarangayNameById(d.barangay_id);
+	const allowedBarangayNames = getAllowedBarangayMoves(currentBarangayName);
+	const allowedNameSet = new Set(
+		[currentBarangayName, ...allowedBarangayNames].map(normalizeBarangayName)
+	);
+	const editableBarangays = BARANGAYS.filter(barangay =>
+		allowedNameSet.has(normalizeBarangayName(barangay.name))
+	);
+	populateBarangayDropdown(editableBarangays.length ? editableBarangays : BARANGAYS);
 
 	const mappings = {
 		'youth-id': y.id,
@@ -970,6 +1462,8 @@ function editYouth(id) {
 		'school_name': d.school_name,
 		'scholarship_program': d.scholarship_program,
 		'work_status': d.work_status,
+		'sports_preference_other': d.sports_preference_other,
+		'talent_preference_other': d.talent_preference_other,
 		'kk_assembly_times': d.kk_assembly_times,
 		'kk_assembly_no_reason': d.kk_assembly_no_reason,
 		'number_of_children': d.number_of_children
@@ -977,11 +1471,16 @@ function editYouth(id) {
 
 	Object.entries(mappings).forEach(([k,v]) => setVal(k, v));
 
-	const checks = ['is_in_school','is_osy','osy_willing_to_enroll','is_working_youth','is_unemployed_youth','is_pwd','has_specific_needs','is_ip','is_muslim','is_scholar','registered_voter_sk','registered_voter_national','voted_last_sk','attended_kk_assembly','is_4ps'];
+	const checks = ['is_in_school','is_osy','osy_willing_to_enroll','is_working_youth','is_unemployed_youth','is_pwd','has_specific_needs','is_ip','is_muslim','is_scholar','registered_voter_sk','registered_voter_national','is_non_voter','voted_last_sk','attended_kk_assembly','is_4ps'];
 	checks.forEach(id => setChk(id, d[id] || y[id] || false));
+	applyPreferenceSelections('sport-pref', SPORT_PREFERENCE_OPTIONS, d.sports_preferences || []);
+	applyPreferenceSelections('talent-pref', TALENT_PREFERENCE_OPTIONS, d.talent_preferences || []);
+	syncNonVoterCheckbox('is_non_voter');
 
+	setYouthBarangayEditable(!!(CURRENT_USER && CURRENT_USER.is_admin));
 	toggleOSY();
 	updateAutoTogglesState();
+	updateBirthdateEligibilityState();
 	document.querySelectorAll('.edit-save-btn').forEach(btn => btn.style.display = '');
 	if (typeof switchTab === 'function') {
 		switchTab('tab-personal',
@@ -1029,8 +1528,13 @@ function saveYouth(e) {
 		is_scholar: getCheck('is_scholar'),
 		scholarship_program: getVal('scholarship_program'),
 		work_status: getVal('work_status'),
+		sports_preferences: collectPreferenceSelections('sport-pref', SPORT_PREFERENCE_OPTIONS),
+		talent_preferences: collectPreferenceSelections('talent-pref', TALENT_PREFERENCE_OPTIONS),
+		sports_preference_other: getVal('sports_preference_other'),
+		talent_preference_other: getVal('talent_preference_other'),
 		registered_voter_sk: getCheck('registered_voter_sk'),
 		registered_voter_national: getCheck('registered_voter_national'),
+		is_non_voter: getCheck('is_non_voter'),
 		voted_last_sk: getCheck('voted_last_sk'),
 		attended_kk_assembly: getCheck('attended_kk_assembly'),
 		kk_assembly_times: Math.max(0, kk_times),
@@ -1039,7 +1543,43 @@ function saveYouth(e) {
 		number_of_children: Math.max(0, num_children)
 	};
 
+	if (!updateBirthdateEligibilityState()) {
+		const age = getAgeFromBirthdateValue(data.birthdate);
+		showModalAlert(
+			age == null
+				? 'This record cannot be saved because the birthdate is outside the allowed youth range.'
+				: `This person is already ${age} years old. The system prohibits saving records for age 31 and above.`
+		);
+		const birthdateInput = $id('birthdate');
+		if (birthdateInput) birthdateInput.focus();
+		return;
+	}
+
 	const existingId = getVal('youth-id');
+	if (existingId) {
+		const existingYouth = getYouthById(parseInt(existingId, 10));
+		const currentBarangayName = existingYouth?.barangay_name || getBarangayNameById(existingYouth?.barangay_id);
+		const targetBarangayName = getBarangayNameById(data.barangay_id);
+		const isBarangayChanged = currentBarangayName && targetBarangayName
+			&& normalizeBarangayName(currentBarangayName) !== normalizeBarangayName(targetBarangayName);
+
+		if (isBarangayChanged) {
+			const allowedBarangays = getAllowedBarangayMoves(currentBarangayName);
+			if (!isAllowedBarangayMove(currentBarangayName, targetBarangayName)) {
+				const allowedLabel = allowedBarangays.length ? allowedBarangays.join(', ') : 'No nearby barangays configured';
+				showModalAlert(`Address transfer from ${currentBarangayName} to ${targetBarangayName} is not allowed. Nearby options: ${allowedLabel}.`);
+				return;
+			}
+
+			const confirmed = confirm(
+				`${existingYouth?.name || 'This youth'} is currently registered in ${currentBarangayName}.\n\n` +
+				`Move the barangay address to ${targetBarangayName}?\n\n` +
+				`Allowed nearby barangays: ${allowedBarangays.join(', ')}`
+			);
+			if (!confirmed) return;
+			data.confirm_barangay_transfer = true;
+		}
+	}
 	if (!existingId && !validateTab('#tab-civic')) {
 		showModalAlert('Please complete Civic & Other before saving the profile.');
 		return;
@@ -1060,7 +1600,13 @@ function saveYouth(e) {
 					fetchYouths();
 				} else {
 					console.error('API error JSON:', obj);
-					alert(obj.error || JSON.stringify(obj));
+					if (obj && obj.age_blocked) {
+						showModalAlert(obj.error || 'This person is over 30 and can no longer be stored in the youth system.');
+						const birthdateInput = $id('birthdate');
+						if (birthdateInput) birthdateInput.focus();
+					} else {
+						alert(obj.error || JSON.stringify(obj));
+					}
 				}
 			} catch (err) {
 				console.error('Non-JSON response:', text);
@@ -1540,6 +2086,11 @@ function viewFullSummary(id) {
 	const content = document.getElementById('summary-content');
     
 	const fmt = (val) => val ? '<span class="text-success fw-bold">Yes</span>' : '<span class="text-danger">No</span>';
+	const fmtList = (values, otherValue, otherLabel) => {
+		const parts = Array.isArray(values) ? [...values] : [];
+		if (otherValue) parts.push(`${otherLabel}: ${otherValue}`);
+		return parts.length ? parts.join(', ') : 'None';
+	};
 
 	content.innerHTML = `
 		<div class="row mb-3">
@@ -1558,6 +2109,8 @@ function viewFullSummary(id) {
 				<p><strong>School:</strong> ${d.school_name || 'N/A'}</p>
 				<p><strong>Work Status:</strong> ${d.work_status || 'N/A'}</p>
 				<p><strong>Scholar:</strong> ${fmt(d.is_scholar)} (${d.scholarship_program || 'N/A'})</p>
+				<p><strong>Sports Preference:</strong> ${fmtList(d.sports_preferences, d.sports_preference_other, 'Other')}</p>
+				<p><strong>Talent Preference:</strong> ${fmtList(d.talent_preferences, d.talent_preference_other, 'Other')}</p>
 			</div>
 		</div>
 		<hr>
@@ -1578,6 +2131,7 @@ function viewFullSummary(id) {
 				<h6 class="text-primary border-bottom">Civic / Others</h6>
 				<p>SK Voter: ${fmt(d.registered_voter_sk)}</p>
 				<p>National Voter: ${fmt(d.registered_voter_national)}</p>
+				<p>Non-Voter: ${fmt(d.is_non_voter)}</p>
 				<p>Attended KK: ${fmt(d.attended_kk_assembly)} (${d.kk_assembly_times || 0} times)</p>
 			</div>
 		</div>
@@ -1592,6 +2146,7 @@ window.showDashboard = showDashboard;
 window.showAdminAccountSection = showAdminAccountSection;
 window.showLoginModal = showLoginModal;
 window.handleAuth = handleAuth;
+window.togglePasswordField = togglePasswordField;
 window.logout = logout;
 window.openModal = openModal;
 window.editYouth = editYouth;
@@ -1603,4 +2158,6 @@ window.downloadBarangaySummaryCSV = downloadBarangaySummaryCSV;
 window.downloadBarangaySummaryPDF = downloadBarangaySummaryPDF;
 window.disableBarangayAccount = disableBarangayAccount;
 window.enableBarangayAccount = enableBarangayAccount;
+window.openAdminAccountModal = openAdminAccountModal;
+window.submitAdminAccountForm = submitAdminAccountForm;
 
