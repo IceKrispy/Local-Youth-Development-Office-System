@@ -90,7 +90,7 @@
         .talent-map-gradient-bar {
             height: 14px;
             border-radius: 999px;
-            background: linear-gradient(90deg, #f8fbff 0%, #cbdaf6 35%, #7fa6e6 68%, #1f4fa3 100%);
+            background: linear-gradient(90deg, #2563eb 0%, #10b981 34%, #facc15 68%, #dc2626 100%);
             border: 1px solid rgba(15, 37, 88, 0.08);
         }
         .talent-map-gradient-labels {
@@ -420,11 +420,38 @@
         ];
     }
 
-    function blendColor(startHex, endHex, ratio) {
-        const start = hexToRgb(startHex);
-        const end = hexToRgb(endHex);
+    function blendRgb(start, end, ratio) {
         const mix = start.map((value, index) => Math.round(value + ((end[index] - value) * ratio)));
-        return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
+        return mix;
+    }
+
+    function getHeatmapRgb(ratio) {
+        const stops = [
+            { stop: 0, color: hexToRgb('#2563eb') },
+            { stop: 0.34, color: hexToRgb('#10b981') },
+            { stop: 0.68, color: hexToRgb('#facc15') },
+            { stop: 1, color: hexToRgb('#dc2626') }
+        ];
+
+        const normalized = Math.max(0, Math.min(1, ratio));
+        for (let index = 1; index < stops.length; index += 1) {
+            const previous = stops[index - 1];
+            const current = stops[index];
+            if (normalized <= current.stop) {
+                const segmentRatio = (normalized - previous.stop) / (current.stop - previous.stop || 1);
+                return blendRgb(previous.color, current.color, segmentRatio);
+            }
+        }
+
+        return stops[stops.length - 1].color;
+    }
+
+    function relativeLuminance(rgb) {
+        const [r, g, b] = rgb.map(channel => {
+            const value = channel / 255;
+            return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        });
+        return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
     }
 
     function cellStyle(value, maxValue) {
@@ -436,9 +463,11 @@
         }
 
         const ratio = value / maxValue;
+        const rgb = getHeatmapRgb(ratio);
+        const background = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
         return {
-            background: blendColor('#eef5ff', '#1f4fa3', Math.min(1, ratio)),
-            color: ratio > 0.58 ? '#ffffff' : '#0f2558'
+            background,
+            color: relativeLuminance(rgb) < 0.42 ? '#ffffff' : '#0f2558'
         };
     }
 

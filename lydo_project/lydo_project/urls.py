@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/admin/update-account/', views.admin_update_account_api, name='admin_update_account'),
 
     path('api/barangays/', views.barangays_api, name='barangays_api'),
+    path('api/barangays/all/', views.all_barangays_api, name='all_barangays_api'),
     path('api/barangay_summary/<int:bid>/', views.barangay_summary, name='barangay_summary'),
     path('api/demographics/', views.demographics_api, name='demographics_api'),
     path('api/heatmap/', views.heatmap_api, name='heatmap_api'),

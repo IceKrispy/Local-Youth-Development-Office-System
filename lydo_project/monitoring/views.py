@@ -200,6 +200,71 @@ def _normalize_preference_option(value):
     return ' '.join(normalized.casefold().split())
 
 
+def _normalize_youth_name(value):
+    normalized = unicodedata.normalize('NFKD', str(value or ''))
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = ''.join(ch if ch.isalnum() or ch.isspace() else ' ' for ch in normalized)
+    return ' '.join(normalized.casefold().split())
+
+
+def _find_duplicate_youth_record(name, birthdate, sex, exclude_id=None):
+    normalized_name = _normalize_youth_name(name)
+    if not normalized_name or not birthdate:
+        return None
+
+    queryset = Youth.objects.select_related('barangay').filter(birthdate=birthdate, sex=sex)
+    if exclude_id:
+        queryset = queryset.exclude(id=exclude_id)
+
+    for youth in queryset:
+        if _normalize_youth_name(youth.name) == normalized_name:
+            return youth
+    return None
+
+
+def _duplicate_youth_response(request, duplicate_youth, requested_barangay):
+    duplicate_purok = (duplicate_youth.purok or '').strip() or 'No purok recorded'
+    current_barangay = duplicate_youth.barangay
+    requested_name = requested_barangay.name if requested_barangay else 'the selected barangay'
+    assigned = _assigned_barangay(request.user)
+
+    if _is_system_admin(request.user):
+        error = (
+            f'Duplicate youth record detected. {duplicate_youth.name} is already registered in '
+            f'{current_barangay.name}, {duplicate_youth.municipality} ({duplicate_purok}). '
+            f'Open the existing record and update its barangay there instead of creating a new one.'
+        )
+    elif assigned and current_barangay.id == assigned.id:
+        error = (
+            f'Duplicate youth record detected. {duplicate_youth.name} is already registered in '
+            f'{current_barangay.name}, {duplicate_youth.municipality} ({duplicate_purok}). '
+            f'Use the existing record in {current_barangay.name} and change the address there if the youth moved to '
+            f'{requested_name}.'
+        )
+    else:
+        error = (
+            f'Duplicate youth record detected. {duplicate_youth.name} is already registered in '
+            f'{current_barangay.name}, {duplicate_youth.municipality} ({duplicate_purok}). '
+            f'Only {current_barangay.name} can transfer this youth record to {requested_name}. '
+            f'Please ask the current barangay to update the existing record instead of creating a new one.'
+        )
+
+    return JsonResponse(
+        {
+            'error': error,
+            'duplicate_youth': True,
+            'duplicate_barangay': current_barangay.name,
+            'duplicate_municipality': duplicate_youth.municipality,
+            'duplicate_purok': duplicate_youth.purok,
+            'duplicate_record_id': duplicate_youth.id,
+            'transfer_requires_origin_barangay': True,
+            'current_barangay': current_barangay.name,
+            'target_barangay': requested_name,
+        },
+        status=400,
+    )
+
+
 def _clean_preference_list(values, allowed_options):
     if not isinstance(values, list):
         return []
@@ -1396,7 +1461,7 @@ def _normalize_barangay_name(name):
 _NEARBY_BARANGAY_GROUPS = [
     ("Alae", "Mantibugao", "Mambatangan"),
     ("Damilag", "Agusan Canyon", "San Miguel"),
-    ("Tankulan", "Diclum", "Dicklum", "Santo NiÃ±o", "Lunocan"),
+    ("Tankulan", "Diclum", "Dicklum", "Santo Niño", "Lunocan"),
     ("Maluko", "Dalirig"),
     ("Dahilayan", "Mampayag", "Guilang-guilang", "Kalugmanan"),
     ("Lingion", "Sankanan", "Santiago", "Lindaban", "Ticala", "Minsuro"),
@@ -1473,6 +1538,14 @@ def barangays_api(request):
     if not request.user.is_authenticated:
         return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
     data = [{'id': barangay.id, 'name': barangay.name} for barangay in _ordered_barangays_for_user(request.user)]
+    return JsonResponse(data, safe=False)
+
+
+def all_barangays_api(request):
+    """Return the full 22-barangay list for authenticated transfer/edit flows."""
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'Unauthorized. Please login.'}, status=401)
+    data = [{'id': barangay.id, 'name': barangay.name} for barangay in _ordered_barangays()]
     return JsonResponse(data, safe=False)
 
 
@@ -1785,6 +1858,9 @@ def youth_api(request):
                     'religion':                 y.religion,
                     'purok':                    y.purok,
                     'barangay_id':              y.barangay.id,
+                    'barangay_name':            y.barangay.name,
+                    'municipality':             y.municipality,
+                    'province':                 y.province,
                     'email':                    y.email,
                     'contact_number':           y.contact_number,
                     'is_in_school':             y.is_in_school,
@@ -1861,6 +1937,7 @@ def youth_api(request):
                     return default
 
             birthdate_value = data.get('birthdate') or None
+            parsed_birthdate = None
             if birthdate_value:
                 try:
                     parsed_birthdate = datetime.date.fromisoformat(birthdate_value)
@@ -1876,6 +1953,8 @@ def youth_api(request):
                         },
                         status=400,
                     )
+
+            sex_value = data.get('sex')
 
             is_non_voter = get_bool('is_non_voter')
             registered_voter_sk = get_bool('registered_voter_sk')
@@ -1946,6 +2025,9 @@ def youth_api(request):
             }
 
             if request.method == 'POST':
+                duplicate_youth = _find_duplicate_youth_record(name, parsed_birthdate, sex_value)
+                if duplicate_youth:
+                    return _duplicate_youth_response(request, duplicate_youth, barangay)
                 Youth.objects.create(**fields)
                 return JsonResponse({'message': 'Youth profile added successfully'})
 
@@ -1957,26 +2039,16 @@ def youth_api(request):
             existing_access_error = _assert_barangay_access(request, youth.barangay)
             if existing_access_error:
                 return existing_access_error
+            duplicate_youth = _find_duplicate_youth_record(name, parsed_birthdate, sex_value, exclude_id=youth.id)
+            if duplicate_youth:
+                return _duplicate_youth_response(request, duplicate_youth, barangay)
             is_barangay_changed = youth.barangay_id != barangay.id
-            if is_barangay_changed:
-                allowed_barangays = _allowed_barangay_transfer_names(youth.barangay)
-                if not _is_allowed_barangay_transfer(youth.barangay, barangay):
-                    allowed_label = ', '.join(allowed_barangays) if allowed_barangays else 'No nearby barangays configured'
-                    return JsonResponse(
-                        {
-                            'error': f"Address transfer from {youth.barangay.name} to {barangay.name} is not allowed. Allowed nearby barangays: {allowed_label}.",
-                            'allowed_barangays': allowed_barangays,
-                            'current_barangay': youth.barangay.name,
-                            'target_barangay': barangay.name,
-                        },
-                        status=400,
-                    )
+            if is_barangay_changed and not _is_system_admin(request.user):
                 if not bool(data.get('confirm_barangay_transfer')):
                     return JsonResponse(
                         {
                             'error': f"{youth.name} is currently registered in {youth.barangay.name}. Confirm the move to {barangay.name} to continue.",
                             'requires_confirmation': True,
-                            'allowed_barangays': allowed_barangays,
                             'current_barangay': youth.barangay.name,
                             'target_barangay': barangay.name,
                         },
